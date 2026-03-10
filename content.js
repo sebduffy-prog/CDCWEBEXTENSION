@@ -364,8 +364,11 @@
   //  FEATURE 4: Mixing Bowl Overlay
   // ═══════════════════════════════════════════════════════════
 
+  var __cdc_stop_requested__ = false;
+
   function createScrapingOverlay() {
     removeScrapingOverlay();
+    __cdc_stop_requested__ = false;
 
     var overlay = document.createElement('div');
     overlay.id = OVERLAY_ID;
@@ -375,7 +378,7 @@
       left: '0',
       width: '100vw',
       height: '100vh',
-      backgroundColor: 'rgba(247, 215, 74, 0.85)',
+      backgroundColor: 'rgba(247, 215, 74, 0.35)',
       zIndex: '2147483646',
       display: 'flex',
       flexDirection: 'column',
@@ -389,44 +392,23 @@
     var styleEl = document.createElement('style');
     styleEl.id = '__cdc_overlay_style__';
     styleEl.textContent =
-      '@keyframes __cdc_stir__ {' +
-        '0% { transform: rotate(0deg); }' +
-        '100% { transform: rotate(360deg); }' +
-      '}' +
       '@keyframes __cdc_pulse__ {' +
         '0%, 100% { opacity: 1; }' +
         '50% { opacity: 0.4; }' +
       '}';
     document.head.appendChild(styleEl);
 
-    // SVG Mixing Bowl with spinning whisk
     overlay.innerHTML =
-      '<div style="position:relative;width:160px;height:160px;margin-bottom:20px;">' +
-        // Bowl body
-        '<svg viewBox="0 0 160 160" width="160" height="160" style="position:absolute;top:0;left:0;">' +
-          // Bowl shape
-          '<ellipse cx="80" cy="110" rx="65" ry="30" fill="#1A1A1A" />' +
-          '<path d="M15 90 Q15 140 80 145 Q145 140 145 90 Z" fill="#1A1A1A" />' +
-          '<rect x="15" y="70" width="130" height="25" rx="4" fill="#1A1A1A" />' +
-          // Bowl rim highlight
-          '<rect x="15" y="68" width="130" height="6" rx="3" fill="#333" />' +
-          // Bowl contents (yellow batter)
-          '<ellipse cx="80" cy="82" rx="55" ry="10" fill="#e5c63e" opacity="0.6" />' +
-        '</svg>' +
-        // Spinning whisk
-        '<div style="position:absolute;top:-10px;left:50%;transform-origin:50% 90px;animation:__cdc_stir__ 1.2s linear infinite;">' +
-          '<svg viewBox="0 0 40 100" width="40" height="100" style="margin-left:-20px;">' +
-            // Whisk handle
-            '<rect x="17" y="0" width="6" height="50" rx="3" fill="#555" />' +
-            // Whisk wires
-            '<ellipse cx="20" cy="70" rx="12" ry="20" fill="none" stroke="#888" stroke-width="2" />' +
-            '<ellipse cx="20" cy="70" rx="6" ry="20" fill="none" stroke="#888" stroke-width="2" />' +
-            '<line x1="20" y1="50" x2="20" y2="90" stroke="#888" stroke-width="2" />' +
-          '</svg>' +
-        '</div>' +
+      // Large translucent "SCROLL to scrape" text
+      '<div style="font-size:72px;font-weight:900;color:rgba(26,26,26,0.18);text-align:center;letter-spacing:4px;text-transform:uppercase;user-select:none;line-height:1.1;margin-bottom:32px;">' +
+        'SCROLL<br>to scrape' +
       '</div>' +
+      // Stop scraping button (needs pointer events)
+      '<button id="__cdc_stop_btn__" style="pointer-events:auto;padding:14px 40px;font-size:18px;font-weight:900;color:#fff;background:#c0392b;border:none;border-radius:8px;cursor:pointer;box-shadow:0 4px 16px rgba(0,0,0,0.25);letter-spacing:1px;text-transform:uppercase;">' +
+        'Stop Scraping' +
+      '</button>' +
       // Status text
-      '<div id="__cdc_overlay_text__" style="font-size:18px;font-weight:800;color:#1A1A1A;text-align:center;animation:__cdc_pulse__ 1.5s ease-in-out infinite;">' +
+      '<div id="__cdc_overlay_text__" style="font-size:16px;font-weight:800;color:#1A1A1A;text-align:center;margin-top:24px;animation:__cdc_pulse__ 1.5s ease-in-out infinite;">' +
         'Chef de Commis is extracting data...' +
       '</div>' +
       '<div id="__cdc_overlay_count__" style="font-size:14px;font-weight:700;color:#5a4e00;margin-top:8px;font-family:\'Courier New\',monospace;">' +
@@ -434,6 +416,18 @@
       '</div>';
 
     document.body.appendChild(overlay);
+
+    // Wire up stop button
+    var stopBtn = document.getElementById('__cdc_stop_btn__');
+    if (stopBtn) {
+      stopBtn.addEventListener('click', function () {
+        __cdc_stop_requested__ = true;
+        stopBtn.textContent = 'Stopping...';
+        stopBtn.disabled = true;
+        stopBtn.style.opacity = '0.6';
+      });
+    }
+
     return overlay;
   }
 
@@ -494,12 +488,15 @@
     var currentCount = 0;
 
     while (currentCount < targetCount && attempts < maxAttempts) {
+      if (__cdc_stop_requested__) break;
+
       // Extract data
       var data = await extractAllColumns();
       currentCount = countExtractedItems(data, columns);
       updateOverlayCount(currentCount, targetCount);
 
       if (currentCount >= targetCount) break;
+      if (__cdc_stop_requested__) break;
 
       // Scroll down visibly
       window.scrollTo({
