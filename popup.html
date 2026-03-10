@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chef de Commis</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body {
+      width: 420px;
+      min-height: 540px;
+    }
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: #18181b; }
+    ::-webkit-scrollbar-thumb { background: #52525b; border-radius: 3px; }
+    .gold-accent { color: #f7d74a; }
+    .gold-bg { background-color: #f7d74a; }
+    .gold-border { border-color: #f7d74a; }
+    .btn-gold {
+      background-color: #f7d74a;
+      color: #09090b;
+      font-weight: 700;
+      transition: background-color 0.15s;
+    }
+    .btn-gold:hover { background-color: #e5c63e; }
+    .btn-outline {
+      border: 1px solid #f7d74a;
+      color: #f7d74a;
+      font-weight: 600;
+      transition: all 0.15s;
+    }
+    .btn-outline:hover {
+      background-color: #f7d74a;
+      color: #09090b;
+    }
+    .column-row {
+      background-color: #1c1c1f;
+      border: 1px solid #27272a;
+      border-radius: 6px;
+      padding: 8px 10px;
+      margin-bottom: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .column-row .col-name {
+      font-weight: 600;
+      color: #f7d74a;
+      flex-shrink: 0;
+      max-width: 110px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .column-row .col-count {
+      color: #a1a1aa;
+      font-size: 11px;
+      flex-shrink: 0;
+    }
+    .column-row .col-selector {
+      color: #52525b;
+      font-size: 10px;
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      text-align: center;
+    }
+    .card {
+      background-color: #1c1c1f;
+      border: 1px solid #27272a;
+      border-radius: 8px;
+      padding: 12px;
+    }
+    .status-dot {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      margin-right: 4px;
+    }
+    .status-mapped { background-color: #22c55e; }
+    .status-unmapped { background-color: #ef4444; }
+  </style>
+</head>
+<body class="bg-zinc-950 text-white text-sm p-4 overflow-y-auto">
+
+  <!-- Header -->
+  <div class="flex items-center justify-between mb-4">
+    <h1 class="text-xl font-extrabold gold-accent tracking-tight">Chef de Commis</h1>
+    <span class="text-zinc-500 text-xs font-mono">v5.0.0</span>
+  </div>
+
+  <!-- Step 1: Map Data -->
+  <section class="mb-4">
+    <h2 class="text-xs font-bold uppercase tracking-widest text-zinc-400 mb-2">Step 1 &mdash; Map Data Columns</h2>
+    <div class="flex gap-2 mb-3">
+      <input
+        id="new-column-name"
+        type="text"
+        placeholder="e.g. Author"
+        class="flex-1 bg-zinc-900 border border-zinc-700 text-white text-sm rounded px-3 py-1.5 focus:outline-none focus:border-yellow-400"
+      />
+      <button id="btn-add-column" class="btn-gold text-xs rounded px-3 py-1.5 whitespace-nowrap">+ Add Column</button>
+    </div>
+    <div id="columns-container" class="max-h-44 overflow-y-auto"></div>
+  </section>
+
+  <hr class="border-zinc-800 mb-4">
+
+  <!-- Step 2: Scrape Mode -->
+  <section class="mb-4">
+    <h2 class="text-xs font-bold uppercase tracking-widest text-zinc-400 mb-3">Step 2 &mdash; Scrape Mode</h2>
+
+    <!-- Card A: Infinite Scroll -->
+    <div class="card mb-3">
+      <h3 class="text-xs font-bold gold-accent mb-2">A &bull; Infinite Scroll</h3>
+      <div class="flex gap-2 items-center">
+        <label class="text-zinc-400 text-xs whitespace-nowrap">Scrolls:</label>
+        <input
+          id="scroll-count"
+          type="number"
+          min="1"
+          value="5"
+          class="w-16 bg-zinc-900 border border-zinc-700 text-white text-xs rounded px-2 py-1 focus:outline-none focus:border-yellow-400"
+        />
+        <button id="btn-auto-scroll" class="btn-outline text-xs rounded px-3 py-1.5 flex-1">Start Auto-Scroll &amp; Extract</button>
+      </div>
+    </div>
+
+    <!-- Card B: Pagination -->
+    <div class="card">
+      <h3 class="text-xs font-bold gold-accent mb-2">B &bull; Pagination</h3>
+      <div class="flex gap-2 items-center mb-2">
+        <button id="btn-select-next" class="btn-outline text-xs rounded px-3 py-1.5 flex-1">Select "Next Page" Button</button>
+        <span id="next-btn-status" class="text-zinc-500 text-xs italic">Not set</span>
+      </div>
+      <div class="flex gap-2 items-center">
+        <label class="text-zinc-400 text-xs whitespace-nowrap">Pages:</label>
+        <input
+          id="page-count"
+          type="number"
+          min="1"
+          value="3"
+          class="w-16 bg-zinc-900 border border-zinc-700 text-white text-xs rounded px-2 py-1 focus:outline-none focus:border-yellow-400"
+        />
+        <button id="btn-auto-paginate" class="btn-outline text-xs rounded px-3 py-1.5 flex-1">Start Auto-Pagination</button>
+      </div>
+    </div>
+  </section>
+
+  <hr class="border-zinc-800 mb-4">
+
+  <!-- Step 3: AI Formatting -->
+  <section class="mb-4">
+    <h2 class="text-xs font-bold uppercase tracking-widest text-zinc-400 mb-2">Step 3 &mdash; AI Formatting Backend</h2>
+    <button id="btn-format" class="btn-gold w-full text-sm rounded py-2.5 tracking-wide">Format &amp; Prepare Data</button>
+
+    <textarea
+      id="output-preview"
+      class="w-full h-48 bg-zinc-900 text-white border border-zinc-700 rounded p-2 mt-4 text-sm font-mono focus:outline-none focus:border-yellow-400 resize-y"
+      placeholder="Formatted output will appear here..."
+    ></textarea>
+  </section>
+
+  <!-- Export -->
+  <section class="flex gap-2">
+    <button id="btn-download" class="btn-gold flex-1 text-xs rounded py-2">Download UTF-8 .txt</button>
+    <button id="btn-clear" class="bg-red-900 hover:bg-red-800 text-red-200 font-semibold flex-1 text-xs rounded py-2 transition-colors">Clear All Storage</button>
+  </section>
+
+  <script src="popup.js"></script>
+</body>
+</html>
