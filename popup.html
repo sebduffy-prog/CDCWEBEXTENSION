@@ -4,170 +4,342 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Chef de Commis</title>
-  <script src="https://cdn.tailwindcss.com"></script>
   <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
     body {
-      width: 420px;
-      min-height: 540px;
+      width: 440px;
+      min-height: 560px;
+      background-color: #f7d74a;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      color: #1A1A1A;
+      font-size: 13px;
+      padding: 16px;
+      overflow-y: auto;
     }
+
     ::-webkit-scrollbar { width: 6px; }
-    ::-webkit-scrollbar-track { background: #18181b; }
-    ::-webkit-scrollbar-thumb { background: #52525b; border-radius: 3px; }
-    .gold-accent { color: #f7d74a; }
-    .gold-bg { background-color: #f7d74a; }
-    .gold-border { border-color: #f7d74a; }
+    ::-webkit-scrollbar-track { background: #1A1A1A; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb { background: #444; border-radius: 3px; }
+
+    /* ── Header ─────────────────────────────── */
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 14px;
+    }
+    .header h1 {
+      font-size: 20px;
+      font-weight: 900;
+      color: #1A1A1A;
+      letter-spacing: -0.5px;
+    }
+    .header .version {
+      font-size: 11px;
+      font-family: 'Courier New', monospace;
+      color: #5a4e00;
+      font-weight: 600;
+    }
+
+    /* ── Section Labels ─────────────────────── */
+    .section-label {
+      font-size: 10px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      color: #5a4e00;
+      margin-bottom: 8px;
+    }
+
+    /* ── Dark Card Containers ───────────────── */
+    .card {
+      background-color: #1A1A1A;
+      border-radius: 12px;
+      padding: 14px;
+      margin-bottom: 12px;
+    }
+    .card h3 {
+      font-size: 12px;
+      font-weight: 700;
+      color: #FFD700;
+      margin-bottom: 10px;
+    }
+    .card label {
+      color: #ccc;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    /* ── Inputs ─────────────────────────────── */
+    input[type="text"],
+    input[type="number"] {
+      background-color: #2a2a2a;
+      border: 1px solid #444;
+      color: #fff;
+      font-size: 12px;
+      border-radius: 8px;
+      padding: 7px 10px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    input[type="text"]:focus,
+    input[type="number"]:focus {
+      border-color: #FFD700;
+    }
+    input[type="text"] {
+      flex: 1;
+    }
+    input[type="number"] {
+      width: 70px;
+    }
+
+    /* ── Buttons ────────────────────────────── */
     .btn-gold {
       background-color: #f7d74a;
-      color: #09090b;
-      font-weight: 700;
-      transition: background-color 0.15s;
+      color: #1A1A1A;
+      font-weight: 800;
+      border: none;
+      border-radius: 8px;
+      padding: 8px 14px;
+      font-size: 12px;
+      cursor: pointer;
+      transition: background-color 0.15s, transform 0.1s;
     }
-    .btn-gold:hover { background-color: #e5c63e; }
+    .btn-gold:hover {
+      background-color: #e5c63e;
+      transform: translateY(-1px);
+    }
+    .btn-gold:active { transform: translateY(0); }
+
     .btn-outline {
-      border: 1px solid #f7d74a;
-      color: #f7d74a;
-      font-weight: 600;
+      background: transparent;
+      border: 2px solid #FFD700;
+      color: #FFD700;
+      font-weight: 700;
+      border-radius: 8px;
+      padding: 7px 12px;
+      font-size: 12px;
+      cursor: pointer;
       transition: all 0.15s;
     }
     .btn-outline:hover {
-      background-color: #f7d74a;
-      color: #09090b;
+      background-color: #FFD700;
+      color: #1A1A1A;
+    }
+
+    .btn-danger {
+      background-color: #3a1111;
+      color: #ff8888;
+      font-weight: 700;
+      border: none;
+      border-radius: 8px;
+      padding: 8px 14px;
+      font-size: 12px;
+      cursor: pointer;
+      transition: background-color 0.15s;
+    }
+    .btn-danger:hover { background-color: #4a1a1a; }
+
+    /* ── Flex Helpers ───────────────────────── */
+    .flex { display: flex; }
+    .flex-1 { flex: 1; }
+    .gap-2 { gap: 8px; }
+    .gap-3 { gap: 10px; }
+    .items-center { align-items: center; }
+    .w-full { width: 100%; }
+    .mb-2 { margin-bottom: 8px; }
+    .mb-3 { margin-bottom: 12px; }
+    .mt-3 { margin-top: 12px; }
+
+    /* ── Column Rows ────────────────────────── */
+    .columns-scroll {
+      max-height: 170px;
+      overflow-y: auto;
     }
     .column-row {
-      background-color: #1c1c1f;
-      border: 1px solid #27272a;
-      border-radius: 6px;
+      background-color: #2a2a2a;
+      border: 1px solid #333;
+      border-radius: 8px;
       padding: 8px 10px;
       margin-bottom: 6px;
       display: flex;
       align-items: center;
-      justify-content: space-between;
       gap: 8px;
     }
     .column-row .col-name {
-      font-weight: 600;
-      color: #f7d74a;
+      font-weight: 700;
+      color: #FFD700;
+      font-family: 'Courier New', monospace;
       flex-shrink: 0;
-      max-width: 110px;
+      max-width: 100px;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
     }
-    .column-row .col-count {
-      color: #a1a1aa;
-      font-size: 11px;
-      flex-shrink: 0;
-    }
     .column-row .col-selector {
-      color: #52525b;
+      color: #666;
       font-size: 10px;
+      font-family: 'Courier New', monospace;
       flex: 1;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
       text-align: center;
     }
-    .card {
-      background-color: #1c1c1f;
-      border: 1px solid #27272a;
-      border-radius: 8px;
-      padding: 12px;
+    .column-row .col-count {
+      color: #FFD700;
+      font-size: 11px;
+      font-family: 'Courier New', monospace;
+      font-weight: 600;
+      flex-shrink: 0;
     }
+
     .status-dot {
       display: inline-block;
       width: 8px;
       height: 8px;
       border-radius: 50%;
-      margin-right: 4px;
+      flex-shrink: 0;
     }
     .status-mapped { background-color: #22c55e; }
     .status-unmapped { background-color: #ef4444; }
+
+    .btn-sm {
+      font-size: 11px;
+      padding: 4px 8px;
+      border-radius: 6px;
+      cursor: pointer;
+      border: none;
+      font-weight: 700;
+    }
+    .btn-select-col {
+      background-color: #f7d74a;
+      color: #1A1A1A;
+    }
+    .btn-select-col:hover { background-color: #e5c63e; }
+    .btn-remove-col {
+      background-color: #333;
+      color: #888;
+    }
+    .btn-remove-col:hover { background-color: #444; color: #ccc; }
+
+    /* ── Divider ────────────────────────────── */
+    .divider {
+      border: none;
+      border-top: 2px solid #d4b83d;
+      margin: 14px 0;
+      opacity: 0.4;
+    }
+
+    /* ── Textarea ───────────────────────────── */
+    textarea {
+      width: 100%;
+      height: 160px;
+      background-color: #2a2a2a;
+      color: #FFD700;
+      border: 1px solid #444;
+      border-radius: 8px;
+      padding: 10px;
+      margin-top: 10px;
+      font-size: 12px;
+      font-family: 'Courier New', monospace;
+      outline: none;
+      resize: vertical;
+    }
+    textarea:focus { border-color: #FFD700; }
+    textarea::placeholder { color: #555; }
+
+    /* ── Next Button Status ─────────────────── */
+    .status-text { font-size: 11px; font-style: italic; }
+    .status-set { color: #22c55e; }
+    .status-unset { color: #888; }
   </style>
 </head>
-<body class="bg-zinc-950 text-white text-sm p-4 overflow-y-auto">
+<body>
 
   <!-- Header -->
-  <div class="flex items-center justify-between mb-4">
-    <h1 class="text-xl font-extrabold gold-accent tracking-tight">Chef de Commis</h1>
-    <span class="text-zinc-500 text-xs font-mono">v5.0.0</span>
+  <div class="header">
+    <h1>Chef de Commis</h1>
+    <span class="version">v5.1.0</span>
   </div>
 
-  <!-- Step 1: Map Data -->
-  <section class="mb-4">
-    <h2 class="text-xs font-bold uppercase tracking-widest text-zinc-400 mb-2">Step 1 &mdash; Map Data Columns</h2>
-    <div class="flex gap-2 mb-3">
-      <input
-        id="new-column-name"
-        type="text"
-        placeholder="e.g. Author"
-        class="flex-1 bg-zinc-900 border border-zinc-700 text-white text-sm rounded px-3 py-1.5 focus:outline-none focus:border-yellow-400"
-      />
-      <button id="btn-add-column" class="btn-gold text-xs rounded px-3 py-1.5 whitespace-nowrap">+ Add Column</button>
+  <!-- Step 1: Map Data Columns -->
+  <section class="mb-3">
+    <div class="section-label">Step 1 &mdash; Map Data Columns</div>
+    <div class="card">
+      <div class="flex gap-2 mb-3">
+        <input
+          id="new-column-name"
+          type="text"
+          placeholder="e.g. Author, Title, Date..."
+        />
+        <button id="btn-add-column" class="btn-gold">+ Add Column</button>
+      </div>
+      <div id="columns-container" class="columns-scroll"></div>
     </div>
-    <div id="columns-container" class="max-h-44 overflow-y-auto"></div>
   </section>
 
-  <hr class="border-zinc-800 mb-4">
+  <hr class="divider">
 
   <!-- Step 2: Scrape Mode -->
-  <section class="mb-4">
-    <h2 class="text-xs font-bold uppercase tracking-widest text-zinc-400 mb-3">Step 2 &mdash; Scrape Mode</h2>
+  <section class="mb-3">
+    <div class="section-label">Step 2 &mdash; Scrape Mode</div>
 
-    <!-- Card A: Infinite Scroll -->
+    <!-- Card A: Target Extraction -->
     <div class="card mb-3">
-      <h3 class="text-xs font-bold gold-accent mb-2">A &bull; Infinite Scroll</h3>
+      <h3>A &bull; Target Extraction (Auto-Scroll)</h3>
       <div class="flex gap-2 items-center">
-        <label class="text-zinc-400 text-xs whitespace-nowrap">Scrolls:</label>
+        <label>Extract</label>
         <input
-          id="scroll-count"
+          id="target-count"
           type="number"
           min="1"
-          value="5"
-          class="w-16 bg-zinc-900 border border-zinc-700 text-white text-xs rounded px-2 py-1 focus:outline-none focus:border-yellow-400"
+          value="20"
         />
-        <button id="btn-auto-scroll" class="btn-outline text-xs rounded px-3 py-1.5 flex-1">Start Auto-Scroll &amp; Extract</button>
+        <label>Items</label>
+        <button id="btn-auto-scroll" class="btn-outline flex-1">Start Extraction</button>
       </div>
     </div>
 
     <!-- Card B: Pagination -->
     <div class="card">
-      <h3 class="text-xs font-bold gold-accent mb-2">B &bull; Pagination</h3>
+      <h3>B &bull; Pagination</h3>
       <div class="flex gap-2 items-center mb-2">
-        <button id="btn-select-next" class="btn-outline text-xs rounded px-3 py-1.5 flex-1">Select "Next Page" Button</button>
-        <span id="next-btn-status" class="text-zinc-500 text-xs italic">Not set</span>
+        <button id="btn-select-next" class="btn-outline flex-1">Select "Next Page" Button</button>
+        <span id="next-btn-status" class="status-text status-unset">Not set</span>
       </div>
       <div class="flex gap-2 items-center">
-        <label class="text-zinc-400 text-xs whitespace-nowrap">Pages:</label>
+        <label>Pages:</label>
         <input
           id="page-count"
           type="number"
           min="1"
           value="3"
-          class="w-16 bg-zinc-900 border border-zinc-700 text-white text-xs rounded px-2 py-1 focus:outline-none focus:border-yellow-400"
         />
-        <button id="btn-auto-paginate" class="btn-outline text-xs rounded px-3 py-1.5 flex-1">Start Auto-Pagination</button>
+        <button id="btn-auto-paginate" class="btn-outline flex-1">Start Auto-Pagination</button>
       </div>
     </div>
   </section>
 
-  <hr class="border-zinc-800 mb-4">
+  <hr class="divider">
 
   <!-- Step 3: AI Formatting -->
-  <section class="mb-4">
-    <h2 class="text-xs font-bold uppercase tracking-widest text-zinc-400 mb-2">Step 3 &mdash; AI Formatting Backend</h2>
-    <button id="btn-format" class="btn-gold w-full text-sm rounded py-2.5 tracking-wide">Format &amp; Prepare Data</button>
-
-    <textarea
-      id="output-preview"
-      class="w-full h-48 bg-zinc-900 text-white border border-zinc-700 rounded p-2 mt-4 text-sm font-mono focus:outline-none focus:border-yellow-400 resize-y"
-      placeholder="Formatted output will appear here..."
-    ></textarea>
+  <section class="mb-3">
+    <div class="section-label">Step 3 &mdash; AI Formatting Backend</div>
+    <div class="card">
+      <button id="btn-format" class="btn-gold w-full" style="padding: 10px; font-size: 13px;">Format &amp; Prepare Data</button>
+      <textarea
+        id="output-preview"
+        placeholder="Formatted output will appear here..."
+      ></textarea>
+    </div>
   </section>
 
   <!-- Export -->
   <section class="flex gap-2">
-    <button id="btn-download" class="btn-gold flex-1 text-xs rounded py-2">Download UTF-8 .txt</button>
-    <button id="btn-clear" class="bg-red-900 hover:bg-red-800 text-red-200 font-semibold flex-1 text-xs rounded py-2 transition-colors">Clear All Storage</button>
+    <button id="btn-download" class="btn-gold flex-1">Download UTF-8 .txt</button>
+    <button id="btn-clear" class="btn-danger flex-1">Clear All Storage</button>
   </section>
 
   <script src="popup.js"></script>

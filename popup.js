@@ -1,48 +1,40 @@
 /* ============================================================
-   Chef de Commis v5.0.0 — Popup Controller
+   Chef de Commis v5.1.0 — Popup Controller
    ============================================================ */
 
 (function () {
   'use strict';
 
   // ── DOM References ──────────────────────────────────────────
-  const elColumnName    = document.getElementById('new-column-name');
-  const elAddColumn     = document.getElementById('btn-add-column');
-  const elColumnsWrap   = document.getElementById('columns-container');
-  const elScrollCount   = document.getElementById('scroll-count');
-  const elAutoScroll    = document.getElementById('btn-auto-scroll');
-  const elSelectNext    = document.getElementById('btn-select-next');
-  const elNextStatus    = document.getElementById('next-btn-status');
-  const elPageCount     = document.getElementById('page-count');
-  const elAutoPaginate  = document.getElementById('btn-auto-paginate');
-  const elFormat        = document.getElementById('btn-format');
-  const elOutput        = document.getElementById('output-preview');
-  const elDownload      = document.getElementById('btn-download');
-  const elClear         = document.getElementById('btn-clear');
+  var elColumnName    = document.getElementById('new-column-name');
+  var elAddColumn     = document.getElementById('btn-add-column');
+  var elColumnsWrap   = document.getElementById('columns-container');
+  var elTargetCount   = document.getElementById('target-count');
+  var elAutoScroll    = document.getElementById('btn-auto-scroll');
+  var elSelectNext    = document.getElementById('btn-select-next');
+  var elNextStatus    = document.getElementById('next-btn-status');
+  var elPageCount     = document.getElementById('page-count');
+  var elAutoPaginate  = document.getElementById('btn-auto-paginate');
+  var elFormat        = document.getElementById('btn-format');
+  var elOutput        = document.getElementById('output-preview');
+  var elDownload      = document.getElementById('btn-download');
+  var elClear         = document.getElementById('btn-clear');
 
   // ── Helpers ─────────────────────────────────────────────────
 
-  /** Send a message to the active tab's content script. */
-  function sendToContent(message, callback) {
+  function getActiveTabId(callback) {
     chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
       if (!tabs || !tabs[0]) return;
-      chrome.tabs.sendMessage(tabs[0].id, message, function (response) {
-        if (chrome.runtime.lastError) {
-          console.warn('sendToContent error:', chrome.runtime.lastError.message);
-        }
-        if (callback) callback(response);
-      });
+      callback(tabs[0].id);
     });
   }
 
-  /** Read keys from chrome.storage.local. */
   function storageGet(keys) {
     return new Promise(function (resolve) {
       chrome.storage.local.get(keys, resolve);
     });
   }
 
-  /** Write to chrome.storage.local. */
   function storageSet(obj) {
     return new Promise(function (resolve) {
       chrome.storage.local.set(obj, resolve);
@@ -51,40 +43,23 @@
 
   // ── Aggressive Sanitizer ────────────────────────────────────
 
-  /**
-   * Strips URLs, HTML tags, line breaks, leading/trailing whitespace,
-   * and common social-media UI noise from a string.
-   */
   function sanitize(raw) {
     if (raw === null || raw === undefined) return '';
     var s = String(raw);
-
-    // Strip URLs
     s = s.replace(/https?:\/\/[^\s]+/gi, '');
-
-    // Strip HTML tags
     s = s.replace(/<[^>]*>/g, '');
-
-    // Decode common HTML entities
     s = s.replace(/&amp;/g, '&');
     s = s.replace(/&lt;/g, '<');
     s = s.replace(/&gt;/g, '>');
     s = s.replace(/&quot;/g, '"');
     s = s.replace(/&#039;/g, "'");
     s = s.replace(/&nbsp;/g, ' ');
-
-    // Strip line breaks and collapse whitespace
     s = s.replace(/[\r\n]+/g, ' ');
     s = s.replace(/\s{2,}/g, ' ');
-
-    // Social-media UI noise patterns
     s = s.replace(/\b\d+\s*points?\b/gi, '');
     s = s.replace(/\b(Reply|Share|Upvote|Downvote|Report|Save|Hide|Bookmark|Flag|Like|Likes|Comment|Comments|Retweet|Retweets|Repost|Reposts)\b/gi, '');
     s = s.replace(/\b\d+\s*(replies|comments|shares|likes|retweets|reposts|views)\b/gi, '');
-
-    // Collapse leftover whitespace and trim
     s = s.replace(/\s{2,}/g, ' ').trim();
-
     return s;
   }
 
@@ -96,7 +71,6 @@
     var data    = result.chef_data || {};
     var nextBtn = result.chef_next_btn || null;
 
-    // Columns list
     elColumnsWrap.innerHTML = '';
     columns.forEach(function (col, idx) {
       var count = (data[col.name] && data[col.name].length) || 0;
@@ -110,18 +84,17 @@
         '<span class="col-name" title="' + escapeHtml(col.name) + '">' + escapeHtml(col.name) + '</span>' +
         '<span class="col-selector" title="' + escapeHtml(col.cssSelector || 'unmapped') + '">' + escapeHtml(col.cssSelector || 'unmapped') + '</span>' +
         '<span class="col-count">' + count + ' items</span>' +
-        '<button class="btn-outline text-xs rounded px-2 py-0.5 btn-select" data-col="' + escapeHtml(col.name) + '">Select</button>' +
-        '<button class="bg-zinc-800 hover:bg-zinc-700 text-zinc-400 text-xs rounded px-2 py-0.5 btn-remove" data-idx="' + idx + '">&times;</button>';
+        '<button class="btn-sm btn-select-col btn-select" data-col="' + escapeHtml(col.name) + '">Select</button>' +
+        '<button class="btn-sm btn-remove-col btn-remove" data-idx="' + idx + '">&times;</button>';
 
       elColumnsWrap.appendChild(row);
     });
 
-    // Bind select buttons
+    // Bind select buttons — inject floating panel via chrome.scripting
     elColumnsWrap.querySelectorAll('.btn-select').forEach(function (btn) {
       btn.addEventListener('click', function () {
         var colName = btn.getAttribute('data-col');
-        sendToContent({ action: 'select_element', column: colName });
-        window.close();
+        injectSelectionPanel('column', colName);
       });
     });
 
@@ -144,11 +117,9 @@
     // Next-button status
     elNextStatus.textContent = nextBtn ? nextBtn : 'Not set';
     if (nextBtn) {
-      elNextStatus.classList.remove('text-zinc-500');
-      elNextStatus.classList.add('text-green-400');
+      elNextStatus.className = 'status-text status-set';
     } else {
-      elNextStatus.classList.remove('text-green-400');
-      elNextStatus.classList.add('text-zinc-500');
+      elNextStatus.className = 'status-text status-unset';
     }
   }
 
@@ -156,6 +127,26 @@
     var div = document.createElement('div');
     div.appendChild(document.createTextNode(str || ''));
     return div.innerHTML;
+  }
+
+  // ── Persistent Selection UI ─────────────────────────────────
+  // Instead of closing the popup and losing context, we inject a
+  // floating panel directly into the page using chrome.scripting.
+
+  function injectSelectionPanel(mode, columnName) {
+    getActiveTabId(function (tabId) {
+      chrome.scripting.executeScript({
+        target: { tabId: tabId },
+        args: [mode, columnName || ''],
+        func: function (mode, columnName) {
+          // This runs in the content script context of the active tab.
+          // Dispatch a custom event that content.js listens for.
+          window.dispatchEvent(new CustomEvent('__cdc_start_selection__', {
+            detail: { mode: mode, column: columnName }
+          }));
+        }
+      });
+    });
   }
 
   // ── Add Column ──────────────────────────────────────────────
@@ -167,7 +158,6 @@
     var result = await storageGet(['chef_columns']);
     var columns = result.chef_columns || [];
 
-    // Prevent duplicates
     var exists = columns.some(function (c) { return c.name === name; });
     if (exists) {
       alert('Column "' + name + '" already exists.');
@@ -180,7 +170,6 @@
     renderColumns();
   });
 
-  // Allow Enter key to add column
   elColumnName.addEventListener('keydown', function (e) {
     if (e.key === 'Enter') elAddColumn.click();
   });
@@ -188,16 +177,24 @@
   // ── Select Next-Page Button ─────────────────────────────────
 
   elSelectNext.addEventListener('click', function () {
-    sendToContent({ action: 'select_next_btn' });
-    window.close();
+    injectSelectionPanel('next_btn', '');
   });
 
-  // ── Auto-Scroll ─────────────────────────────────────────────
+  // ── Auto-Scroll (Target-Based) ──────────────────────────────
 
   elAutoScroll.addEventListener('click', function () {
-    var scrolls = parseInt(elScrollCount.value, 10) || 5;
-    sendToContent({ action: 'auto_scroll', scrolls: scrolls });
-    window.close();
+    var target = parseInt(elTargetCount.value, 10) || 20;
+    getActiveTabId(function (tabId) {
+      chrome.scripting.executeScript({
+        target: { tabId: tabId },
+        args: [target],
+        func: function (targetCount) {
+          window.dispatchEvent(new CustomEvent('__cdc_start_extraction__', {
+            detail: { targetCount: targetCount }
+          }));
+        }
+      });
+    });
   });
 
   // ── Auto-Paginate ───────────────────────────────────────────
@@ -205,8 +202,14 @@
   elAutoPaginate.addEventListener('click', async function () {
     var pages = parseInt(elPageCount.value, 10) || 3;
     await storageSet({ is_paginating: true, pages_left: pages });
-    sendToContent({ action: 'scrape_and_paginate' });
-    window.close();
+    getActiveTabId(function (tabId) {
+      chrome.scripting.executeScript({
+        target: { tabId: tabId },
+        func: function () {
+          window.dispatchEvent(new CustomEvent('__cdc_scrape_and_paginate__'));
+        }
+      });
+    });
   });
 
   // ── Format & Prepare Data ───────────────────────────────────
@@ -221,7 +224,6 @@
       return;
     }
 
-    // Find the longest array for total row count
     var maxRows = 0;
     columns.forEach(function (col) {
       var arr = data[col.name] || [];
