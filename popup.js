@@ -159,6 +159,7 @@
           action: 'START_SELECTION',
           field: fieldName
         });
+        window.close();
       });
     });
   }
@@ -300,7 +301,7 @@
   // ── Listen for storage changes to live-refresh ──────────────
 
   chrome.storage.onChanged.addListener(function (changes, area) {
-    if (area === 'local') {
+    if (area === 'local' && (changes.fieldSelectors || changes.chef_columns || changes.chef_data)) {
       renderColumns();
     }
   });

@@ -255,8 +255,36 @@
       selectionField = null;
       hoverTarget = null;
 
-      // Ask background to reopen the popup
-      chrome.runtime.sendMessage({ action: 'REOPEN_POPUP' });
+      // Show captured feedback, then ask background to reopen the popup
+      var badge = document.getElementById(BADGE_ID);
+      if (!badge) {
+        badge = document.createElement('div');
+        badge.id = BADGE_ID;
+        Object.assign(badge.style, {
+          position: 'fixed',
+          top: '8px',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          padding: '6px 16px',
+          borderRadius: '8px',
+          fontSize: '13px',
+          fontWeight: '700',
+          fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+          zIndex: '999999',
+          pointerEvents: 'none',
+          whiteSpace: 'nowrap'
+        });
+        document.body.appendChild(badge);
+      }
+      badge.textContent = '\u2705 Captured!';
+      badge.style.backgroundColor = '#22c55e';
+      badge.style.color = '#ffffff';
+
+      setTimeout(function () {
+        var b = document.getElementById(BADGE_ID);
+        if (b) b.remove();
+        chrome.runtime.sendMessage({ action: 'REOPEN_POPUP' });
+      }, 800);
     });
   }
 
@@ -276,9 +304,11 @@
 
     createSelectionIndicator(field);
     injectHighlightCSS();
-    document.addEventListener('mouseover', onSelMouseOver, true);
-    document.addEventListener('mouseout', onSelMouseOut, true);
-    document.addEventListener('click', onSelClick, true);
+    setTimeout(function () {
+      document.addEventListener('mouseover', onSelMouseOver, true);
+      document.addEventListener('mouseout', onSelMouseOut, true);
+      document.addEventListener('click', onSelClick, true);
+    }, 400);
   }
 
   // ═══════════════════════════════════════════════════════════
