@@ -66,10 +66,28 @@
   // ── Render Column Rows ──────────────────────────────────────
 
   async function renderColumns() {
-    var result = await storageGet(['chef_columns', 'chef_data', 'chef_next_btn']);
+    var result = await storageGet(['chef_columns', 'chef_data', 'chef_next_btn', 'fieldSelectors']);
     var columns = result.chef_columns || [];
     var data    = result.chef_data || {};
     var nextBtn = result.chef_next_btn || null;
+    var fieldSelectors = result.fieldSelectors || {};
+
+    // Hydrate columns with any selectors saved via the native selection flow
+    var dirty = false;
+    columns.forEach(function (col) {
+      if (fieldSelectors[col.name] && col.cssSelector !== fieldSelectors[col.name]) {
+        col.cssSelector = fieldSelectors[col.name];
+        dirty = true;
+      }
+    });
+    // Hydrate the next-button selector
+    if (fieldSelectors['__next_btn__'] && nextBtn !== fieldSelectors['__next_btn__']) {
+      nextBtn = fieldSelectors['__next_btn__'];
+      dirty = true;
+    }
+    if (dirty) {
+      await storageSet({ chef_columns: columns, chef_next_btn: nextBtn });
+    }
 
     elColumnsWrap.innerHTML = '';
     columns.forEach(function (col, idx) {
@@ -90,11 +108,11 @@
       elColumnsWrap.appendChild(row);
     });
 
-    // Bind select buttons — inject floating panel via chrome.scripting
+    // Bind select buttons — start native selection flow
     elColumnsWrap.querySelectorAll('.btn-select').forEach(function (btn) {
       btn.addEventListener('click', function () {
         var colName = btn.getAttribute('data-col');
-        injectSelectionPanel('column', colName);
+        startFieldSelection('column', colName);
       });
     });
 
@@ -129,22 +147,18 @@
     return div.innerHTML;
   }
 
-  // ── Persistent Selection UI ─────────────────────────────────
-  // Instead of closing the popup and losing context, we inject a
-  // floating panel directly into the page using chrome.scripting.
+  // ── Native Selection Flow ───────────────────────────────────
+  // Save the active field to storage, message content.js to start
+  // selection mode, then let the popup close naturally.
 
-  function injectSelectionPanel(mode, columnName) {
-    getActiveTabId(function (tabId) {
-      chrome.scripting.executeScript({
-        target: { tabId: tabId },
-        args: [mode, columnName || ''],
-        func: function (mode, columnName) {
-          // This runs in the content script context of the active tab.
-          // Dispatch a custom event that content.js listens for.
-          window.dispatchEvent(new CustomEvent('__cdc_start_selection__', {
-            detail: { mode: mode, column: columnName }
-          }));
-        }
+  function startFieldSelection(mode, columnName) {
+    var fieldName = mode === 'next_btn' ? '__next_btn__' : columnName;
+    storageSet({ activeSelectionField: fieldName }).then(function () {
+      getActiveTabId(function (tabId) {
+        chrome.tabs.sendMessage(tabId, {
+          action: 'START_SELECTION',
+          field: fieldName
+        });
       });
     });
   }
@@ -177,7 +191,7 @@
   // ── Select Next-Page Button ─────────────────────────────────
 
   elSelectNext.addEventListener('click', function () {
-    injectSelectionPanel('next_btn', '');
+    startFieldSelection('next_btn', '');
   });
 
   // ── Auto-Scroll (Target-Based) ──────────────────────────────
@@ -275,7 +289,7 @@
   elClear.addEventListener('click', function () {
     if (!confirm('Clear ALL Chef de Commis data? This cannot be undone.')) return;
     chrome.storage.local.remove(
-      ['chef_columns', 'chef_data', 'chef_next_btn', 'is_paginating', 'pages_left'],
+      ['chef_columns', 'chef_data', 'chef_next_btn', 'is_paginating', 'pages_left', 'fieldSelectors', 'activeSelectionField'],
       function () {
         elOutput.value = '';
         renderColumns();

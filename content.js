@@ -8,7 +8,6 @@
   // ── Constants ───────────────────────────────────────────────
   var HIGHLIGHT_CLASS  = '__cdc_highlight__';
   var STYLE_ID         = '__cdc_style__';
-  var PANEL_ID         = '__cdc_selection_panel__';
   var OVERLAY_ID       = '__cdc_scrape_overlay__';
 
   // ── Utility: Storage helpers ────────────────────────────────
@@ -156,167 +155,109 @@
   }
 
   // ═══════════════════════════════════════════════════════════
-  //  FEATURE 2: Persistent Floating Selection Panel
+  //  FEATURE 2: Native Selection Mode (viewport border + badge)
   // ═══════════════════════════════════════════════════════════
 
-  var selectionMode    = null;
-  var selectionColumn  = null;
+  var BORDER_ID = '__cdc_viewport_border__';
+  var BADGE_ID  = '__cdc_selection_badge__';
+
+  var selectionField   = null;
   var hoverTarget      = null;
-  var capturedSelector = null;
 
-  function createSelectionPanel() {
-    removeSelectionPanel();
+  function createSelectionIndicator(fieldName) {
+    removeSelectionIndicator();
 
-    var panel = document.createElement('div');
-    panel.id = PANEL_ID;
-    panel.innerHTML =
-      '<div id="__cdc_panel_header__" style="cursor:move;padding:10px 14px;font-weight:800;font-size:14px;color:#1A1A1A;border-bottom:2px solid #d4b83d;user-select:none;">' +
-        'Selection Mode Active' +
-      '</div>' +
-      '<div style="padding:12px 14px;">' +
-        '<div style="font-size:11px;color:#1A1A1A;font-weight:600;margin-bottom:6px;">Hovered Selector:</div>' +
-        '<div id="__cdc_panel_selector__" style="font-family:\'Courier New\',monospace;font-size:11px;color:#1A1A1A;background:#e5c63e;padding:6px 10px;border-radius:6px;word-break:break-all;min-height:20px;font-weight:600;">Hover over an element...</div>' +
-        '<div id="__cdc_panel_actions__" style="display:none;margin-top:10px;display:flex;gap:8px;">' +
-          '<button id="__cdc_panel_confirm__" style="flex:1;padding:8px;background:#1A1A1A;color:#FFD700;border:none;border-radius:8px;font-weight:800;font-size:12px;cursor:pointer;">Confirm</button>' +
-          '<button id="__cdc_panel_cancel__" style="flex:1;padding:8px;background:#5a4e00;color:#f7d74a;border:none;border-radius:8px;font-weight:700;font-size:12px;cursor:pointer;">Cancel</button>' +
-        '</div>' +
-      '</div>';
-
-    // Panel styles
-    Object.assign(panel.style, {
+    // Viewport border — 5px solid yellow around the inner window
+    var border = document.createElement('div');
+    border.id = BORDER_ID;
+    Object.assign(border.style, {
       position: 'fixed',
-      top: '20px',
-      right: '20px',
-      width: '300px',
-      backgroundColor: '#f7d74a',
-      borderRadius: '12px',
-      boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
-      zIndex: '2147483647',
+      top: '0',
+      left: '0',
+      width: '100vw',
+      height: '100vh',
+      border: '5px solid #FFCC00',
+      boxSizing: 'border-box',
+      pointerEvents: 'none',
+      zIndex: '999999'
+    });
+    document.body.appendChild(border);
+
+    // Top-center badge
+    var badge = document.createElement('div');
+    badge.id = BADGE_ID;
+    badge.textContent = 'Targeting element for: ' + fieldName;
+    Object.assign(badge.style, {
+      position: 'fixed',
+      top: '8px',
+      left: '50%',
+      transform: 'translateX(-50%)',
+      backgroundColor: '#1A1A1A',
+      color: '#FFCC00',
+      padding: '6px 16px',
+      borderRadius: '8px',
+      fontSize: '13px',
+      fontWeight: '700',
       fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-      overflow: 'hidden'
+      zIndex: '999999',
+      pointerEvents: 'none',
+      whiteSpace: 'nowrap'
     });
-
-    document.body.appendChild(panel);
-
-    // Make panel draggable
-    makeDraggable(panel, panel.querySelector('#__cdc_panel_header__'));
-
-    // Hide actions initially until an element is clicked
-    panel.querySelector('#__cdc_panel_actions__').style.display = 'none';
-
-    // Cancel button
-    panel.querySelector('#__cdc_panel_cancel__').addEventListener('click', function (e) {
-      e.stopPropagation();
-      cancelSelection();
-    });
-
-    // Confirm button
-    panel.querySelector('#__cdc_panel_confirm__').addEventListener('click', function (e) {
-      e.stopPropagation();
-      confirmSelection();
-    });
-
-    return panel;
+    document.body.appendChild(badge);
   }
 
-  function removeSelectionPanel() {
-    var existing = document.getElementById(PANEL_ID);
-    if (existing) existing.remove();
-  }
-
-  function updatePanelSelector(text) {
-    var el = document.getElementById('__cdc_panel_selector__');
-    if (el) el.textContent = text;
-  }
-
-  function showPanelActions() {
-    var el = document.getElementById('__cdc_panel_actions__');
-    if (el) el.style.display = 'flex';
-  }
-
-  function makeDraggable(panel, handle) {
-    var offsetX = 0, offsetY = 0, dragging = false;
-
-    handle.addEventListener('mousedown', function (e) {
-      dragging = true;
-      offsetX = e.clientX - panel.getBoundingClientRect().left;
-      offsetY = e.clientY - panel.getBoundingClientRect().top;
-      e.preventDefault();
-    });
-
-    document.addEventListener('mousemove', function (e) {
-      if (!dragging) return;
-      panel.style.left = (e.clientX - offsetX) + 'px';
-      panel.style.top  = (e.clientY - offsetY) + 'px';
-      panel.style.right = 'auto';
-    });
-
-    document.addEventListener('mouseup', function () {
-      dragging = false;
-    });
+  function removeSelectionIndicator() {
+    var border = document.getElementById(BORDER_ID);
+    if (border) border.remove();
+    var badge = document.getElementById(BADGE_ID);
+    if (badge) badge.remove();
   }
 
   // ── Selection Mode Handlers ─────────────────────────────────
 
   function onSelMouseOver(e) {
-    // Ignore our own panel
-    if (e.target.closest('#' + PANEL_ID)) return;
-
     if (hoverTarget) hoverTarget.classList.remove(HIGHLIGHT_CLASS);
     hoverTarget = e.target;
     hoverTarget.classList.add(HIGHLIGHT_CLASS);
-
-    var sel = computeSelector(hoverTarget);
-    updatePanelSelector(sel);
   }
 
   function onSelMouseOut(e) {
-    if (e.target.closest('#' + PANEL_ID)) return;
     if (e.target) e.target.classList.remove(HIGHLIGHT_CLASS);
   }
 
   function onSelClick(e) {
-    // Ignore clicks on our own panel
-    if (e.target.closest('#' + PANEL_ID)) return;
-
     e.preventDefault();
     e.stopPropagation();
 
     var target = e.target;
-    capturedSelector = computeSelector(target);
-    updatePanelSelector(capturedSelector);
-    showPanelActions();
+    var selector = computeSelector(target);
 
-    // Stop hover tracking after click — user needs to confirm or cancel
+    // Remove event listeners immediately
     document.removeEventListener('mouseover', onSelMouseOver, true);
     document.removeEventListener('mouseout', onSelMouseOut, true);
     document.removeEventListener('click', onSelClick, true);
-  }
 
-  async function confirmSelection() {
+    // Clean up visual indicators
     removeHighlightCSS();
-    removeSelectionPanel();
+    removeSelectionIndicator();
 
-    if (!capturedSelector) return;
+    // Read the active field and save the selector
+    storageGet(['activeSelectionField', 'fieldSelectors']).then(function (result) {
+      var field = result.activeSelectionField || selectionField;
+      var selectors = result.fieldSelectors || {};
+      selectors[field] = selector;
 
-    if (selectionMode === 'next_btn') {
-      await storageSet({ chef_next_btn: capturedSelector });
-    } else if (selectionMode === 'column' && selectionColumn) {
-      var result = await storageGet(['chef_columns']);
-      var columns = result.chef_columns || [];
-      columns = columns.map(function (col) {
-        if (col.name === selectionColumn) {
-          return { name: col.name, cssSelector: capturedSelector };
-        }
-        return col;
+      return storageSet({
+        fieldSelectors: selectors,
+        activeSelectionField: ''
       });
-      await storageSet({ chef_columns: columns });
-      await extractAllColumns();
-    }
+    }).then(function () {
+      selectionField = null;
+      hoverTarget = null;
 
-    selectionMode   = null;
-    selectionColumn = null;
-    capturedSelector = null;
+      // Ask background to reopen the popup
+      chrome.runtime.sendMessage({ action: 'REOPEN_POPUP' });
+    });
   }
 
   function cancelSelection() {
@@ -324,19 +265,16 @@
     document.removeEventListener('mouseout', onSelMouseOut, true);
     document.removeEventListener('click', onSelClick, true);
     removeHighlightCSS();
-    removeSelectionPanel();
-    selectionMode   = null;
-    selectionColumn = null;
-    capturedSelector = null;
+    removeSelectionIndicator();
+    selectionField = null;
+    hoverTarget = null;
   }
 
-  function startSelectionMode(mode, columnName) {
-    selectionMode   = mode;
-    selectionColumn = columnName || null;
-    hoverTarget     = null;
-    capturedSelector = null;
+  function startSelectionMode(field) {
+    selectionField = field;
+    hoverTarget    = null;
 
-    createSelectionPanel();
+    createSelectionIndicator(field);
     injectHighlightCSS();
     document.addEventListener('mouseover', onSelMouseOver, true);
     document.addEventListener('mouseout', onSelMouseOut, true);
@@ -592,11 +530,6 @@
 
   // ── Event Listeners (from popup via chrome.scripting) ───────
 
-  window.addEventListener('__cdc_start_selection__', function (e) {
-    var detail = e.detail || {};
-    startSelectionMode(detail.mode, detail.column);
-  });
-
   window.addEventListener('__cdc_start_extraction__', function (e) {
     var detail = e.detail || {};
     performTargetExtraction(detail.targetCount || 20);
@@ -606,19 +539,14 @@
     scrapeAndPaginate();
   });
 
-  // ── Message Listener (legacy support) ──────────────────────
+  // ── Message Listener ──────────────────────────────────────
 
   chrome.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
     if (!msg || !msg.action) return;
 
     switch (msg.action) {
-      case 'select_element':
-        startSelectionMode('column', msg.column);
-        sendResponse({ ok: true });
-        break;
-
-      case 'select_next_btn':
-        startSelectionMode('next_btn');
+      case 'START_SELECTION':
+        startSelectionMode(msg.field);
         sendResponse({ ok: true });
         break;
 
