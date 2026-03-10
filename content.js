@@ -291,7 +291,7 @@
       // Show "Captured!" feedback badge
       var badge = document.createElement('div');
       badge.id = BADGE_ID;
-      badge.textContent = '\u2705 Captured!';
+      badge.textContent = 'Captured!';
       Object.assign(badge.style, {
         position: 'fixed',
         top: '8px',
@@ -399,9 +399,9 @@
     document.head.appendChild(styleEl);
 
     overlay.innerHTML =
-      // Large translucent "SCROLL to scrape" text
+      // Large translucent "SCRAPING" text
       '<div style="font-size:72px;font-weight:900;color:rgba(26,26,26,0.18);text-align:center;letter-spacing:4px;text-transform:uppercase;user-select:none;line-height:1.1;margin-bottom:32px;">' +
-        'SCROLL<br>to scrape' +
+        'SCRAPING' +
       '</div>' +
       // Stop scraping button (needs pointer events)
       '<button id="__cdc_stop_btn__" style="pointer-events:auto;padding:14px 40px;font-size:18px;font-weight:900;color:#fff;background:#c0392b;border:none;border-radius:8px;cursor:pointer;box-shadow:0 4px 16px rgba(0,0,0,0.25);letter-spacing:1px;text-transform:uppercase;">' +
@@ -422,9 +422,7 @@
     if (stopBtn) {
       stopBtn.addEventListener('click', function () {
         __cdc_stop_requested__ = true;
-        stopBtn.textContent = 'Stopping...';
-        stopBtn.disabled = true;
-        stopBtn.style.opacity = '0.6';
+        removeScrapingOverlay();
       });
     }
 
