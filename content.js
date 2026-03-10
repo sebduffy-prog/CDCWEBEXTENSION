@@ -444,7 +444,52 @@
   }
 
   // ═══════════════════════════════════════════════════════════
-  //  FEATURE 3: Target-Based Auto-Scrolling
+  //  Toast Notification (replaces alert)
+  // ═══════════════════════════════════════════════════════════
+
+  var TOAST_ID = '__cdc_toast__';
+
+  function showToast(message, durationMs) {
+    var existing = document.getElementById(TOAST_ID);
+    if (existing) existing.remove();
+
+    var toast = document.createElement('div');
+    toast.id = TOAST_ID;
+    toast.textContent = message;
+    Object.assign(toast.style, {
+      position: 'fixed',
+      bottom: '32px',
+      right: '32px',
+      backgroundColor: '#1A1A1A',
+      color: '#FFCC00',
+      padding: '12px 24px',
+      borderRadius: '10px',
+      fontSize: '14px',
+      fontWeight: '700',
+      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+      zIndex: '2147483647',
+      pointerEvents: 'none',
+      boxShadow: '0 4px 20px rgba(0,0,0,0.35)',
+      opacity: '1',
+      transition: 'opacity 0.5s ease'
+    });
+    document.body.appendChild(toast);
+
+    setTimeout(function () {
+      toast.style.opacity = '0';
+      setTimeout(function () {
+        if (toast.parentNode) toast.remove();
+      }, 500);
+    }, durationMs || 3000);
+
+    // Also try to notify the popup
+    try {
+      chrome.runtime.sendMessage({ action: 'SCRAPE_COMPLETE', message: message });
+    } catch (e) { /* popup may be closed */ }
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  //  FEATURE 3: Target-Based Auto-Scrolling (SPA-safe)
   // ═══════════════════════════════════════════════════════════
 
   /**
@@ -469,6 +514,13 @@
     });
   }
 
+  /**
+   * Get the true scroll height across different DOM layouts.
+   */
+  function getScrollBottom() {
+    return document.documentElement.scrollHeight || document.body.scrollHeight;
+  }
+
   async function performTargetExtraction(targetCount) {
     createScrapingOverlay();
     updateOverlayCount(0, targetCount);
@@ -479,18 +531,21 @@
 
     if (mappedColumns.length === 0) {
       removeScrapingOverlay();
-      alert('Chef de Commis: No columns mapped. Map at least one column first.');
+      showToast('Chef de Commis: No columns mapped. Map at least one column first.', 4000);
       return;
     }
 
-    var maxAttempts = targetCount * 3; // Safety cap to prevent infinite loops
-    var attempts = 0;
+    var maxAttempts = targetCount * 3;
+    var staleRounds = 0;
+    var maxStaleRounds = 5;
+    var previousCount = 0;
     var currentCount = 0;
+    var TICK_DELAY = 600;
 
-    while (currentCount < targetCount && attempts < maxAttempts) {
+    for (var i = 0; i < maxAttempts; i++) {
       if (__cdc_stop_requested__) break;
 
-      // Extract data
+      // 1. Extract INSIDE the loop — capture data before the SPA unloads off-screen nodes
       var data = await extractAllColumns();
       currentCount = countExtractedItems(data, columns);
       updateOverlayCount(currentCount, targetCount);
@@ -498,18 +553,27 @@
       if (currentCount >= targetCount) break;
       if (__cdc_stop_requested__) break;
 
-      // Scroll down visibly
-      window.scrollTo({
-        top: document.body.scrollHeight,
-        behavior: 'smooth'
-      });
+      // 2. Scroll to absolute bottom using robust scroll math
+      window.scrollTo(0, getScrollBottom());
 
-      // Wait for new content to load
-      await delay(800);
-      await waitForDOMMutation(2500);
-      await delay(500);
+      // 3. Jiggle: brief upward scroll to trigger lazy-load listeners
+      await delay(50);
+      window.scrollTo(0, getScrollBottom() - 100);
+      await delay(50);
+      window.scrollTo(0, getScrollBottom());
 
-      attempts++;
+      // 4. Wait for network / lazy-load XHR to fire, then for DOM mutations
+      await delay(TICK_DELAY);
+      await waitForDOMMutation(2000);
+
+      // 5. Stale-round detection: if no new items appeared, count towards exit
+      if (currentCount === previousCount) {
+        staleRounds++;
+        if (staleRounds >= maxStaleRounds) break; // no more content to load
+      } else {
+        staleRounds = 0;
+      }
+      previousCount = currentCount;
     }
 
     // Final extraction pass
@@ -517,9 +581,11 @@
     var finalCount = countExtractedItems(finalData, columns);
     updateOverlayCount(finalCount, targetCount);
 
-    // Brief pause to show final count
-    await delay(1000);
+    await delay(600);
     removeScrapingOverlay();
+
+    // Graceful notification instead of alert()
+    showToast('Scrape Complete: ' + finalCount + ' items', 3000);
   }
 
   // ── Pagination Engine (runs on page load) ───────────────────
