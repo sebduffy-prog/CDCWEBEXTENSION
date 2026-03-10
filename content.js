@@ -143,7 +143,7 @@
     style.textContent =
       '.' + HIGHLIGHT_CLASS + ' { outline: 3px solid #f7d74a !important; cursor: crosshair !important; }' +
       '.' + HIGHLIGHT_CLASS + ':hover { outline: 3px solid #e5c63e !important; background-color: rgba(247,215,74,0.08) !important; }';
-    document.head.appendChild(style);
+    (document.head || document.documentElement).appendChild(style);
   }
 
   function removeHighlightCSS() {
@@ -162,6 +162,7 @@
   var BADGE_ID  = '__cdc_selection_badge__';
 
   var selectionField   = null;
+  var selectionActive  = false;
   var hoverTarget      = null;
 
   function createSelectionIndicator(fieldName) {
@@ -216,69 +217,98 @@
   // ── Selection Mode Handlers ─────────────────────────────────
 
   function onSelMouseOver(e) {
+    if (!selectionActive) return;
     if (hoverTarget) hoverTarget.classList.remove(HIGHLIGHT_CLASS);
     hoverTarget = e.target;
     hoverTarget.classList.add(HIGHLIGHT_CLASS);
   }
 
   function onSelMouseOut(e) {
+    if (!selectionActive) return;
     if (e.target) e.target.classList.remove(HIGHLIGHT_CLASS);
   }
 
   function onSelClick(e) {
+    if (!selectionActive) return;
+
     e.preventDefault();
     e.stopPropagation();
+    e.stopImmediatePropagation();
 
     var target = e.target;
+
+    // Remove the highlight class before computing the selector
+    target.classList.remove(HIGHLIGHT_CLASS);
     var selector = computeSelector(target);
 
-    // Remove event listeners immediately
+    // Tear down listeners immediately
+    selectionActive = false;
     document.removeEventListener('mouseover', onSelMouseOver, true);
     document.removeEventListener('mouseout', onSelMouseOut, true);
     document.removeEventListener('click', onSelClick, true);
+    document.removeEventListener('keydown', onSelKeydown, true);
 
     // Clean up visual indicators
     removeHighlightCSS();
     removeSelectionIndicator();
 
-    // Read the active field and save the selector
-    storageGet(['activeSelectionField', 'fieldSelectors']).then(function (result) {
-      var field = result.activeSelectionField || selectionField;
+    // Determine which field we're saving for
+    var field = selectionField;
+
+    // Save the selector to fieldSelectors AND update chef_columns in one go
+    storageGet(['fieldSelectors', 'chef_columns', 'chef_next_btn']).then(function (result) {
       var selectors = result.fieldSelectors || {};
+      var columns   = result.chef_columns || [];
+      var nextBtn   = result.chef_next_btn || null;
+
+      // Save to fieldSelectors
       selectors[field] = selector;
+
+      // Also update the matching column's cssSelector directly
+      if (field === '__next_btn__') {
+        nextBtn = selector;
+      } else {
+        columns.forEach(function (col) {
+          if (col.name === field) {
+            col.cssSelector = selector;
+          }
+        });
+      }
 
       return storageSet({
         fieldSelectors: selectors,
+        chef_columns: columns,
+        chef_next_btn: nextBtn,
         activeSelectionField: ''
       });
+    }).then(function () {
+      // Now extract data immediately with the updated selector
+      return extractAllColumns();
     }).then(function () {
       selectionField = null;
       hoverTarget = null;
 
-      // Show captured feedback, then ask background to reopen the popup
-      var badge = document.getElementById(BADGE_ID);
-      if (!badge) {
-        badge = document.createElement('div');
-        badge.id = BADGE_ID;
-        Object.assign(badge.style, {
-          position: 'fixed',
-          top: '8px',
-          left: '50%',
-          transform: 'translateX(-50%)',
-          padding: '6px 16px',
-          borderRadius: '8px',
-          fontSize: '13px',
-          fontWeight: '700',
-          fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-          zIndex: '999999',
-          pointerEvents: 'none',
-          whiteSpace: 'nowrap'
-        });
-        document.body.appendChild(badge);
-      }
+      // Show "Captured!" feedback badge
+      var badge = document.createElement('div');
+      badge.id = BADGE_ID;
       badge.textContent = '\u2705 Captured!';
-      badge.style.backgroundColor = '#22c55e';
-      badge.style.color = '#ffffff';
+      Object.assign(badge.style, {
+        position: 'fixed',
+        top: '8px',
+        left: '50%',
+        transform: 'translateX(-50%)',
+        backgroundColor: '#22c55e',
+        color: '#ffffff',
+        padding: '6px 16px',
+        borderRadius: '8px',
+        fontSize: '13px',
+        fontWeight: '700',
+        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+        zIndex: '999999',
+        pointerEvents: 'none',
+        whiteSpace: 'nowrap'
+      });
+      document.body.appendChild(badge);
 
       setTimeout(function () {
         var b = document.getElementById(BADGE_ID);
@@ -288,10 +318,18 @@
     });
   }
 
+  function onSelKeydown(e) {
+    if (e.key === 'Escape') {
+      cancelSelection();
+    }
+  }
+
   function cancelSelection() {
+    selectionActive = false;
     document.removeEventListener('mouseover', onSelMouseOver, true);
     document.removeEventListener('mouseout', onSelMouseOut, true);
     document.removeEventListener('click', onSelClick, true);
+    document.removeEventListener('keydown', onSelKeydown, true);
     removeHighlightCSS();
     removeSelectionIndicator();
     selectionField = null;
@@ -299,16 +337,27 @@
   }
 
   function startSelectionMode(field) {
-    selectionField = field;
-    hoverTarget    = null;
+    // Cancel any prior selection that might still be active
+    if (selectionActive) {
+      cancelSelection();
+    }
 
-    createSelectionIndicator(field);
+    selectionField  = field;
+    selectionActive = true;
+    hoverTarget     = null;
+
+    // Inject CSS and show visual indicator
     injectHighlightCSS();
-    setTimeout(function () {
-      document.addEventListener('mouseover', onSelMouseOver, true);
-      document.addEventListener('mouseout', onSelMouseOut, true);
-      document.addEventListener('click', onSelClick, true);
-    }, 400);
+    createSelectionIndicator(field);
+
+    // Attach listeners immediately (use capture phase so we
+    // intercept clicks before the page's own handlers)
+    document.addEventListener('mouseover', onSelMouseOver, true);
+    document.addEventListener('mouseout', onSelMouseOut, true);
+    document.addEventListener('click', onSelClick, true);
+    document.addEventListener('keydown', onSelKeydown, true);
+
+    console.log('Chef de Commis: Selection mode started for "' + field + '"');
   }
 
   // ═══════════════════════════════════════════════════════════
@@ -575,6 +624,10 @@
     if (!msg || !msg.action) return;
 
     switch (msg.action) {
+      case 'PING':
+        sendResponse({ pong: true });
+        break;
+
       case 'START_SELECTION':
         startSelectionMode(msg.field);
         sendResponse({ ok: true });
@@ -595,7 +648,18 @@
     }
   });
 
-  // ── On Page Load: Check if we're mid-pagination ─────────────
+  // ── On Page Load: Check for pending selection & pagination ──
+
+  // If the popup closed before the message arrived, check storage
+  // for a pending selection request.
+  storageGet(['activeSelectionField']).then(function (result) {
+    if (result.activeSelectionField) {
+      startSelectionMode(result.activeSelectionField);
+    }
+  });
+
   checkPagination();
+
+  console.log('Chef de Commis: Content script loaded and ready.');
 
 })();

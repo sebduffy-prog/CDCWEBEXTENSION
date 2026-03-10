@@ -22,13 +22,6 @@
 
   // ── Helpers ─────────────────────────────────────────────────
 
-  function getActiveTabId(callback) {
-    chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
-      if (!tabs || !tabs[0]) return;
-      callback(tabs[0].id);
-    });
-  }
-
   function storageGet(keys) {
     return new Promise(function (resolve) {
       chrome.storage.local.get(keys, resolve);
@@ -147,19 +140,57 @@
     return div.innerHTML;
   }
 
+  // ── Ensure Content Script Is Injected ─────────────────────
+  // If the content script wasn't auto-injected (e.g. the tab was
+  // open before the extension loaded), inject it programmatically.
+
+  function ensureContentScript(tabId) {
+    return new Promise(function (resolve) {
+      // Ping the content script to see if it's alive
+      chrome.tabs.sendMessage(tabId, { action: 'PING' }, function (response) {
+        if (chrome.runtime.lastError || !response || !response.pong) {
+          // Content script not present — inject it
+          chrome.scripting.executeScript(
+            { target: { tabId: tabId }, files: ['content.js'] },
+            function () {
+              // Small delay to let it initialize
+              setTimeout(resolve, 150);
+            }
+          );
+        } else {
+          resolve();
+        }
+      });
+    });
+  }
+
   // ── Native Selection Flow ───────────────────────────────────
   // Save the active field to storage, message content.js to start
   // selection mode, then let the popup close naturally.
 
   function startFieldSelection(mode, columnName) {
     var fieldName = mode === 'next_btn' ? '__next_btn__' : columnName;
-    storageSet({ activeSelectionField: fieldName }).then(function () {
-      getActiveTabId(function (tabId) {
-        chrome.tabs.sendMessage(tabId, {
-          action: 'START_SELECTION',
-          field: fieldName
-        });
-        window.close();
+
+    chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
+      if (!tabs || !tabs[0]) return;
+      var tabId = tabs[0].id;
+
+      // 1. Save the active field to storage first
+      storageSet({ activeSelectionField: fieldName }).then(function () {
+        // 2. Ensure the content script is present
+        return ensureContentScript(tabId);
+      }).then(function () {
+        // 3. Send the selection message — wait for acknowledgement before closing
+        chrome.tabs.sendMessage(
+          tabId,
+          { action: 'START_SELECTION', field: fieldName },
+          function () {
+            // Ignore errors here — the content script will read
+            // activeSelectionField from storage as a fallback.
+            // Close the popup after the message is dispatched.
+            window.close();
+          }
+        );
       });
     });
   }
@@ -199,7 +230,9 @@
 
   elAutoScroll.addEventListener('click', function () {
     var target = parseInt(elTargetCount.value, 10) || 20;
-    getActiveTabId(function (tabId) {
+    chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
+      if (!tabs || !tabs[0]) return;
+      var tabId = tabs[0].id;
       chrome.scripting.executeScript({
         target: { tabId: tabId },
         args: [target],
@@ -217,7 +250,9 @@
   elAutoPaginate.addEventListener('click', async function () {
     var pages = parseInt(elPageCount.value, 10) || 3;
     await storageSet({ is_paginating: true, pages_left: pages });
-    getActiveTabId(function (tabId) {
+    chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
+      if (!tabs || !tabs[0]) return;
+      var tabId = tabs[0].id;
       chrome.scripting.executeScript({
         target: { tabId: tabId },
         func: function () {
