@@ -1,347 +1,170 @@
-/* ============================================================
-   Chef de Commis v5.1.0 — Popup Controller
-   ============================================================ */
+document.addEventListener('DOMContentLoaded', async () => {
+  const columnsContainer = document.getElementById('columns-container');
+  const btnAddColumn = document.getElementById('btn-add-column');
+  const inputNewColumn = document.getElementById('new-column-name');
+  const btnAutoScroll = document.getElementById('btn-auto-scroll');
+  const scrollCountInput = document.getElementById('scroll-count');
+  const btnSelectNext = document.getElementById('btn-select-next');
+  const btnAutoPaginate = document.getElementById('btn-auto-paginate');
+  const pageCountInput = document.getElementById('page-count');
+  const nextBtnStatus = document.getElementById('next-btn-status');
+  const btnFormat = document.getElementById('btn-format');
+  const btnDownload = document.getElementById('btn-download');
+  const btnClear = document.getElementById('btn-clear');
+  const outputPreview = document.getElementById('output-preview');
 
-(function () {
-  'use strict';
+  // Initialization
+  await renderColumns();
+  await updateNextBtnStatus();
 
-  // ── DOM References ──────────────────────────────────────────
-  var elColumnName    = document.getElementById('new-column-name');
-  var elAddColumn     = document.getElementById('btn-add-column');
-  var elColumnsWrap   = document.getElementById('columns-container');
-  var elTargetCount   = document.getElementById('target-count');
-  var elAutoScroll    = document.getElementById('btn-auto-scroll');
-  var elSelectNext    = document.getElementById('btn-select-next');
-  var elNextStatus    = document.getElementById('next-btn-status');
-  var elPageCount     = document.getElementById('page-count');
-  var elAutoPaginate  = document.getElementById('btn-auto-paginate');
-  var elFormat        = document.getElementById('btn-format');
-  var elOutput        = document.getElementById('output-preview');
-  var elDownload      = document.getElementById('btn-download');
-  var elClear         = document.getElementById('btn-clear');
-
-  // ── Helpers ─────────────────────────────────────────────────
-
-  function storageGet(keys) {
-    return new Promise(function (resolve) {
-      chrome.storage.local.get(keys, resolve);
-    });
-  }
-
-  function storageSet(obj) {
-    return new Promise(function (resolve) {
-      chrome.storage.local.set(obj, resolve);
-    });
-  }
-
-  // ── Aggressive Sanitizer ────────────────────────────────────
-
-  function sanitize(raw) {
-    if (raw === null || raw === undefined) return '';
-    var s = String(raw);
-    s = s.replace(/https?:\/\/[^\s]+/gi, '');
-    s = s.replace(/<[^>]*>/g, '');
-    s = s.replace(/&amp;/g, '&');
-    s = s.replace(/&lt;/g, '<');
-    s = s.replace(/&gt;/g, '>');
-    s = s.replace(/&quot;/g, '"');
-    s = s.replace(/&#039;/g, "'");
-    s = s.replace(/&nbsp;/g, ' ');
-    s = s.replace(/[\r\n]+/g, ' ');
-    s = s.replace(/\s{2,}/g, ' ');
-    s = s.replace(/\b\d+\s*points?\b/gi, '');
-    s = s.replace(/\b(Reply|Share|Upvote|Downvote|Report|Save|Hide|Bookmark|Flag|Like|Likes|Comment|Comments|Retweet|Retweets|Repost|Reposts)\b/gi, '');
-    s = s.replace(/\b\d+\s*(replies|comments|shares|likes|retweets|reposts|views)\b/gi, '');
-    s = s.replace(/\s{2,}/g, ' ').trim();
-    return s;
-  }
-
-  // ── Render Column Rows ──────────────────────────────────────
-
-  async function renderColumns() {
-    var result = await storageGet(['chef_columns', 'chef_data', 'chef_next_btn', 'fieldSelectors']);
-    var columns = result.chef_columns || [];
-    var data    = result.chef_data || {};
-    var nextBtn = result.chef_next_btn || null;
-    var fieldSelectors = result.fieldSelectors || {};
-
-    // Hydrate columns with any selectors saved via the native selection flow
-    var dirty = false;
-    columns.forEach(function (col) {
-      if (fieldSelectors[col.name] && col.cssSelector !== fieldSelectors[col.name]) {
-        col.cssSelector = fieldSelectors[col.name];
-        dirty = true;
-      }
-    });
-    // Hydrate the next-button selector
-    if (fieldSelectors['__next_btn__'] && nextBtn !== fieldSelectors['__next_btn__']) {
-      nextBtn = fieldSelectors['__next_btn__'];
-      dirty = true;
-    }
-    if (dirty) {
-      await storageSet({ chef_columns: columns, chef_next_btn: nextBtn });
-    }
-
-    elColumnsWrap.innerHTML = '';
-    columns.forEach(function (col, idx) {
-      var count = (data[col.name] && data[col.name].length) || 0;
-      var mapped = !!col.cssSelector;
-
-      var row = document.createElement('div');
-      row.className = 'column-row';
-
-      row.innerHTML =
-        '<span class="status-dot ' + (mapped ? 'status-mapped' : 'status-unmapped') + '"></span>' +
-        '<span class="col-name" title="' + escapeHtml(col.name) + '">' + escapeHtml(col.name) + '</span>' +
-        '<span class="col-selector" title="' + escapeHtml(col.cssSelector || 'unmapped') + '">' + escapeHtml(col.cssSelector || 'unmapped') + '</span>' +
-        '<span class="col-count">' + count + ' items</span>' +
-        '<button class="btn-sm btn-select-col btn-select" data-col="' + escapeHtml(col.name) + '">Select</button>' +
-        '<button class="btn-sm btn-remove-col btn-remove" data-idx="' + idx + '">&times;</button>';
-
-      elColumnsWrap.appendChild(row);
-    });
-
-    // Bind select buttons — start native selection flow
-    elColumnsWrap.querySelectorAll('.btn-select').forEach(function (btn) {
-      btn.addEventListener('click', function () {
-        var colName = btn.getAttribute('data-col');
-        startFieldSelection('column', colName);
-      });
-    });
-
-    // Bind remove buttons
-    elColumnsWrap.querySelectorAll('.btn-remove').forEach(function (btn) {
-      btn.addEventListener('click', async function () {
-        var idx = parseInt(btn.getAttribute('data-idx'), 10);
-        var res = await storageGet(['chef_columns', 'chef_data']);
-        var cols = res.chef_columns || [];
-        var d = res.chef_data || {};
-        var removed = cols.splice(idx, 1);
-        if (removed.length && d[removed[0].name]) {
-          delete d[removed[0].name];
-        }
-        await storageSet({ chef_columns: cols, chef_data: d });
-        renderColumns();
-      });
-    });
-
-    // Next-button status
-    elNextStatus.textContent = nextBtn ? nextBtn : 'Not set';
-    if (nextBtn) {
-      elNextStatus.className = 'status-text status-set';
-    } else {
-      elNextStatus.className = 'status-text status-unset';
-    }
-  }
-
-  function escapeHtml(str) {
-    var div = document.createElement('div');
-    div.appendChild(document.createTextNode(str || ''));
-    return div.innerHTML;
-  }
-
-  // ── Ensure Content Script Is Injected ─────────────────────
-  // If the content script wasn't auto-injected (e.g. the tab was
-  // open before the extension loaded), inject it programmatically.
-
-  function ensureContentScript(tabId) {
-    return new Promise(function (resolve) {
-      // Ping the content script to see if it's alive
-      chrome.tabs.sendMessage(tabId, { action: 'PING' }, function (response) {
-        if (chrome.runtime.lastError || !response || !response.pong) {
-          // Content script not present — inject it
-          chrome.scripting.executeScript(
-            { target: { tabId: tabId }, files: ['content.js'] },
-            function () {
-              // Small delay to let it initialize
-              setTimeout(resolve, 150);
-            }
-          );
-        } else {
-          resolve();
-        }
-      });
-    });
-  }
-
-  // ── Native Selection Flow ───────────────────────────────────
-  // Save the active field to storage, message content.js to start
-  // selection mode, then let the popup close naturally.
-
-  function startFieldSelection(mode, columnName) {
-    var fieldName = mode === 'next_btn' ? '__next_btn__' : columnName;
-
-    chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
-      if (!tabs || !tabs[0]) return;
-      var tabId = tabs[0].id;
-
-      // 1. Save the active field to storage first
-      storageSet({ activeSelectionField: fieldName }).then(function () {
-        // 2. Ensure the content script is present
-        return ensureContentScript(tabId);
-      }).then(function () {
-        // 3. Send the selection message — wait for acknowledgement before closing
-        chrome.tabs.sendMessage(
-          tabId,
-          { action: 'START_SELECTION', field: fieldName },
-          function () {
-            // Ignore errors here — the content script will read
-            // activeSelectionField from storage as a fallback.
-            // Close the popup after the message is dispatched.
-            window.close();
-          }
-        );
-      });
-    });
-  }
-
-  // ── Add Column ──────────────────────────────────────────────
-
-  elAddColumn.addEventListener('click', async function () {
-    var name = elColumnName.value.trim();
+  // -----------------------------------------
+  // UI Actions
+  // -----------------------------------------
+  btnAddColumn.addEventListener('click', async () => {
+    const name = inputNewColumn.value.trim();
     if (!name) return;
+    const { chef_columns = [] } = await chrome.storage.local.get(['chef_columns']);
+    if (!chef_columns.find(c => c.name === name)) {
+      chef_columns.push({ name, cssSelector: null });
+      await chrome.storage.local.set({ chef_columns });
+      inputNewColumn.value = '';
+      await renderColumns();
+    }
+  });
 
-    var result = await storageGet(['chef_columns']);
-    var columns = result.chef_columns || [];
+  btnSelectNext.addEventListener('click', async () => {
+    sendMessageToContent({ action: 'select_next_btn' });
+    window.close();
+  });
 
-    var exists = columns.some(function (c) { return c.name === name; });
-    if (exists) {
-      alert('Column "' + name + '" already exists.');
-      return;
+  btnAutoScroll.addEventListener('click', () => {
+    const scrolls = parseInt(scrollCountInput.value) || 5;
+    sendMessageToContent({ action: 'auto_scroll', scrolls });
+    window.close();
+  });
+
+  btnAutoPaginate.addEventListener('click', async () => {
+    const pages = parseInt(pageCountInput.value) || 3;
+    await chrome.storage.local.set({ is_paginating: true, pages_left: pages });
+    sendMessageToContent({ action: 'scrape_and_paginate' });
+    window.close();
+  });
+
+  btnClear.addEventListener('click', async () => {
+    await chrome.storage.local.clear();
+    outputPreview.value = '';
+    await renderColumns();
+    await updateNextBtnStatus();
+  });
+
+  btnDownload.addEventListener('click', () => {
+    const data = outputPreview.value;
+    if (!data) return alert("Nothing to download! Format data first.");
+    const blob = new Blob([data], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    chrome.downloads.download({ url: url, filename: 'Chef_de_Commis_Export.txt' });
+  });
+
+  // -----------------------------------------
+  // The Data Formatting Pipeline
+  // -----------------------------------------
+  btnFormat.addEventListener('click', async () => {
+    const { chef_columns = [], chef_data = {} } = await chrome.storage.local.get(['chef_columns', 'chef_data']);
+    if (chef_columns.length === 0) return outputPreview.value = "No columns mapped.";
+
+    // Determine row count by finding the longest array
+    let maxRows = 0;
+    for (const key in chef_data) {
+      if (chef_data[key].length > maxRows) maxRows = chef_data[key].length;
     }
 
-    columns.push({ name: name, cssSelector: '' });
-    await storageSet({ chef_columns: columns });
-    elColumnName.value = '';
-    renderColumns();
+    let finalText = '';
+
+    for (let i = 0; i < maxRows; i++) {
+      chef_columns.forEach(col => {
+        let rawValue = (chef_data[col.name] && chef_data[col.name][i]) ? chef_data[col.name][i] : 'N/A';
+        finalText += `${col.name}: ${sanitize(rawValue)}\n`;
+      });
+      finalText += '---\n';
+    }
+
+    outputPreview.value = finalText;
   });
 
-  elColumnName.addEventListener('keydown', function (e) {
-    if (e.key === 'Enter') elAddColumn.click();
-  });
+  // Aggressive Noise & Chunk Sanitizer
+  function sanitize(str) {
+    if (!str || str === 'N/A') return 'N/A';
+    
+    let s = str.replace(/http[^\s]+/g, ''); // Strip URLs
+    s = s.replace(/<[^>]*>?/gm, ''); // Strip HTML
+    s = s.replace(/[\u200B-\u200D\uFEFF]/g, ''); // Strip Zero Width Characters
+    
+    // Explicitly target YouTube/Social Media Noise
+    s = s.replace(/^(Subscribe|Join|Reply|Share|Upvote|Save|Hide|Report)$/igm, ''); 
+    s = s.replace(/\b(Subscribe|Join|Reply|Share|Upvote)\b/gi, '');
+    s = s.replace(/^\s*\d+\s+(points|likes|comments|shares|views|months ago|years ago)\s*$/igm, '');
+    
+    // Massive Block Fix: Truncate run-on blocks (bad selectors)
+    let lineBreaks = (s.match(/\n/g) || []).length;
+    if (s.length > 500 && lineBreaks > 10) {
+        // Flatten it to one line and truncate so it doesn't break row formatting
+        s = s.replace(/\n+/g, ' ').substring(0, 500) + '... [TRUNCATED NOISE BLOCK]';
+    } else {
+        s = s.replace(/\n{3,}/g, '\n\n'); // Normalize spacing
+    }
+    
+    return s.trim() || 'N/A';
+  }
 
-  // ── Select Next-Page Button ─────────────────────────────────
+  // -----------------------------------------
+  // Helpers
+  // -----------------------------------------
+  async function renderColumns() {
+    const { chef_columns = [], chef_data = {} } = await chrome.storage.local.get(['chef_columns', 'chef_data']);
+    columnsContainer.innerHTML = '';
+    
+    chef_columns.forEach(col => {
+      const count = (chef_data[col.name] || []).length;
+      const row = document.createElement('div');
+      row.className = 'column-row';
+      row.innerHTML = `
+        <div class="flex flex-col flex-1 overflow-hidden">
+          <span class="col-name">${col.name}</span>
+          <span class="col-count">${count} items saved</span>
+        </div>
+        <button class="btn-select btn-outline text-[10px] px-2 py-1 rounded" data-col="${col.name}">Select</button>
+      `;
+      columnsContainer.appendChild(row);
+    });
 
-  elSelectNext.addEventListener('click', function () {
-    startFieldSelection('next_btn', '');
-  });
-
-  // ── Auto-Scroll (Target-Based) ──────────────────────────────
-
-  elAutoScroll.addEventListener('click', function () {
-    var target = parseInt(elTargetCount.value, 10) || 20;
-    chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
-      if (!tabs || !tabs[0]) return;
-      var tabId = tabs[0].id;
-      chrome.scripting.executeScript({
-        target: { tabId: tabId },
-        args: [target],
-        func: function (targetCount) {
-          window.dispatchEvent(new CustomEvent('__cdc_start_extraction__', {
-            detail: { targetCount: targetCount }
-          }));
-        }
+    document.querySelectorAll('.btn-select').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const colName = e.target.getAttribute('data-col');
+        sendMessageToContent({ action: 'select_element', column: colName });
+        window.close();
       });
     });
-  });
+  }
 
-  // ── Auto-Paginate ───────────────────────────────────────────
-
-  elAutoPaginate.addEventListener('click', async function () {
-    var pages = parseInt(elPageCount.value, 10) || 3;
-    await storageSet({ is_paginating: true, pages_left: pages });
-    chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
-      if (!tabs || !tabs[0]) return;
-      var tabId = tabs[0].id;
-      chrome.scripting.executeScript({
-        target: { tabId: tabId },
-        func: function () {
-          window.dispatchEvent(new CustomEvent('__cdc_scrape_and_paginate__'));
-        }
-      });
-    });
-  });
-
-  // ── Format & Prepare Data ───────────────────────────────────
-
-  elFormat.addEventListener('click', async function () {
-    var result = await storageGet(['chef_columns', 'chef_data']);
-    var columns = result.chef_columns || [];
-    var data    = result.chef_data || {};
-
-    if (columns.length === 0) {
-      elOutput.value = '[ No columns defined. Add columns in Step 1. ]';
-      return;
+  async function updateNextBtnStatus() {
+    const { chef_next_btn } = await chrome.storage.local.get(['chef_next_btn']);
+    if (chef_next_btn) {
+      nextBtnStatus.textContent = 'Ready';
+      nextBtnStatus.className = 'text-green-500 text-xs font-bold';
+    } else {
+      nextBtnStatus.textContent = 'Not set';
+      nextBtnStatus.className = 'text-zinc-500 text-xs italic';
     }
+  }
 
-    var maxRows = 0;
-    columns.forEach(function (col) {
-      var arr = data[col.name] || [];
-      if (arr.length > maxRows) maxRows = arr.length;
-    });
-
-    if (maxRows === 0) {
-      elOutput.value = '[ No data scraped yet. Use Step 2 to scrape. ]';
-      return;
-    }
-
-    var lines = [];
-    for (var i = 0; i < maxRows; i++) {
-      columns.forEach(function (col) {
-        var arr = data[col.name] || [];
-        var raw = i < arr.length ? arr[i] : '';
-        var clean = sanitize(raw);
-        lines.push(col.name + ': ' + clean);
-      });
-      lines.push('---');
-    }
-
-    elOutput.value = lines.join('\n');
-  });
-
-  // ── Download UTF-8 .txt ─────────────────────────────────────
-
-  elDownload.addEventListener('click', function () {
-    var text = elOutput.value;
-    if (!text || !text.trim()) {
-      alert('Nothing to download. Format your data first.');
-      return;
-    }
-
-    var blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
-    var url  = URL.createObjectURL(blob);
-
-    chrome.downloads.download({
-      url: url,
-      filename: 'chef-de-commis-export.txt',
-      saveAs: true
-    }, function () {
-      URL.revokeObjectURL(url);
-    });
-  });
-
-  // ── Clear All Storage ───────────────────────────────────────
-
-  elClear.addEventListener('click', function () {
-    if (!confirm('Clear ALL Chef de Commis data? This cannot be undone.')) return;
-    chrome.storage.local.remove(
-      ['chef_columns', 'chef_data', 'chef_next_btn', 'is_paginating', 'pages_left', 'fieldSelectors', 'activeSelectionField'],
-      function () {
-        elOutput.value = '';
-        renderColumns();
+  function sendMessageToContent(message) {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (tabs[0]) {
+        chrome.tabs.sendMessage(tabs[0].id, message).catch(err => {
+          console.error("Content script not ready:", err);
+          alert("Please refresh the webpage and try again.");
+        });
       }
-    );
-  });
-
-  // ── Listen for storage changes to live-refresh ──────────────
-
-  chrome.storage.onChanged.addListener(function (changes, area) {
-    if (area === 'local' && (changes.fieldSelectors || changes.chef_columns || changes.chef_data)) {
-      renderColumns();
-    }
-  });
-
-  // ── Initial Render ──────────────────────────────────────────
-  renderColumns();
-
-})();
+    });
+  }
+});
