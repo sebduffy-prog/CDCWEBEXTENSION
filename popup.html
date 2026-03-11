@@ -187,6 +187,7 @@
       white-space: nowrap;
       text-align: center;
     }
+    .column-row .col-name { flex: 1; }
     .column-row .col-count {
       color: #FFD700;
       font-size: 11px;
@@ -337,9 +338,13 @@
   </section>
 
   <!-- Export -->
-  <section class="flex gap-2">
-    <button id="btn-download" class="btn-gold flex-1">Download UTF-8 .txt</button>
-    <button id="btn-clear" class="btn-danger flex-1">Clear All Storage</button>
+  <section>
+    <div class="flex gap-2 mb-2">
+      <button id="btn-download-txt" class="btn-gold flex-1">Export .txt</button>
+      <button id="btn-download-csv" class="btn-gold flex-1">Export .csv</button>
+      <button id="btn-download-docx" class="btn-gold flex-1">Export .docx</button>
+    </div>
+    <button id="btn-clear" class="btn-danger w-full">Clear All Storage</button>
   </section>
 
   <script src="popup.js"></script>
