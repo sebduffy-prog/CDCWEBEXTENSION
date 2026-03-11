@@ -1,417 +1,597 @@
-// Global State
-let isSelecting = false;
-let targetColumn = '';
-let isPaginating = false;
+/* ================================================================
+   Chef de Commis v6.0 — Content Script
+   ================================================================
+   Architecture:
+   1. Event Shield Selection Engine   — mousedown capture-phase interception
+   2. Container-Based Extraction Math — LCA-aligned row extraction
+   3. Auto-Scroll & Pagination        — append + deduplicate pipeline
+   ================================================================ */
 
-// ---------------------------------------------
-// Event Suppression (prevents page navigation during selection)
-// ---------------------------------------------
+(() => {
+  'use strict';
 
-// Capture-phase blockers for click and mouseup.
-// These remain active briefly AFTER selection completes so the browser
-// does not follow links or fire handlers from the pointer-down event.
-function suppressClick(e) {
-  if (isSelecting) {
-    e.preventDefault();
-    e.stopPropagation();
-    e.stopImmediatePropagation();
-  }
-}
+  // ─── Constants ──────────────────────────────────────────────
+  const HOVER_STYLE_ID   = 'chef-de-commis-style';
+  const TOAST_ID         = 'chef-toast';
+  const SHIELD_DURATION  = 500;   // ms to keep post-selection shield active
+  const SCROLL_SETTLE_MS = 1200;  // ms to wait after each scroll tick
+  const LAZY_RENDER_MS   = 600;   // ms to wait for lazy-loaded content
+  const PAGE_SETTLE_MS   = 2500;  // ms to wait after page navigation
 
-function suppressMouseUp(e) {
-  if (isSelecting) {
-    e.preventDefault();
-    e.stopPropagation();
-    e.stopImmediatePropagation();
-  }
-}
+  // Transient classes/attributes to strip from selectors
+  const TRANSIENT_CLASS_RE = /hover|active|focus|selected|open|visible|show|chef-hover|style-scope/i;
 
-// ---------------------------------------------
-// Message Listener
-// ---------------------------------------------
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  if (request.action === 'select_element') {
-    startSelectionMode(request.column);
-    sendResponse({ status: 'Selection mode activated' });
-  } else if (request.action === 'select_next_btn') {
-    startSelectionMode('next_btn');
-    sendResponse({ status: 'Next button selection activated' });
-  } else if (request.action === 'auto_scroll') {
-    performAutoScroll(request.scrolls);
-    sendResponse({ status: 'Scrolling started' });
-  } else if (request.action === 'scrape_and_paginate') {
-    startPagination();
-    sendResponse({ status: 'Pagination started' });
-  }
-  return true;
-});
+  // ─── Selection State ───────────────────────────────────────
+  let selectionTarget = null;     // column name or 'next_btn'
 
-// ---------------------------------------------
-// Visual Scraper Logic
-// ---------------------------------------------
-function startSelectionMode(columnName) {
-  isSelecting = true;
-  targetColumn = columnName;
+  // References to shield listeners so we can remove them precisely
+  let shieldClick   = null;
+  let shieldMouseUp = null;
+  let shieldTimer   = null;
 
-  // Inject Hover CSS
-  let style = document.getElementById('chef-de-commis-style');
-  if (!style) {
-    style = document.createElement('style');
-    style.id = 'chef-de-commis-style';
+  // ─── Hover Style Injection ─────────────────────────────────
+  function injectHoverStyle() {
+    if (document.getElementById(HOVER_STYLE_ID)) return;
+    const style = document.createElement('style');
+    style.id = HOVER_STYLE_ID;
     style.textContent = `
       .chef-hover {
         outline: 3px solid #f7d74a !important;
+        outline-offset: -1px !important;
         cursor: crosshair !important;
-        background-color: rgba(247, 215, 74, 0.15) !important;
+        background-color: rgba(247, 215, 74, 0.12) !important;
       }
     `;
-    document.head.appendChild(style);
+    (document.head || document.documentElement).appendChild(style);
   }
 
-  // Hover listeners
-  document.addEventListener('mouseover', onMouseOver, { capture: true });
-  document.addEventListener('mouseout', onMouseOut, { capture: true });
-
-  // FIX #1: Selection fires on pointerdown (not click), so the browser
-  // can never swallow the event before we act on it.
-  document.addEventListener('pointerdown', onPointerDown, { capture: true });
-
-  // Block click and mouseup in capture phase so the page cannot navigate.
-  document.addEventListener('click', suppressClick, { capture: true });
-  document.addEventListener('mouseup', suppressMouseUp, { capture: true });
-}
-
-function onMouseOver(e) {
-  if (isSelecting && e.target) {
-    e.target.classList.add('chef-hover');
+  function removeHoverStyle() {
+    const style = document.getElementById(HOVER_STYLE_ID);
+    if (style) style.remove();
+    document.querySelectorAll('.chef-hover').forEach(el => el.classList.remove('chef-hover'));
   }
-}
 
-function onMouseOut(e) {
-  if (isSelecting && e.target) {
-    e.target.classList.remove('chef-hover');
-  }
-}
-
-// FIX #1: The selection trigger now lives on pointerdown.
-async function onPointerDown(e) {
-  e.preventDefault();
-  e.stopPropagation();
-  e.stopImmediatePropagation();
-
-  // End selection mode immediately
-  isSelecting = false;
-
-  // Remove hover listeners
-  document.removeEventListener('mouseover', onMouseOver, { capture: true });
-  document.removeEventListener('mouseout', onMouseOut, { capture: true });
-  document.removeEventListener('pointerdown', onPointerDown, { capture: true });
-
-  // Remove hover highlight from the clicked element
-  if (e.target) e.target.classList.remove('chef-hover');
-
-  const selector = computeSelector(e.target);
-
-  if (targetColumn === 'next_btn') {
-    await chrome.storage.local.set({ chef_next_btn: selector });
-    showToast('Next Button Saved!');
-  } else {
-    const { chef_columns = [] } = await chrome.storage.local.get(['chef_columns']);
-    const existingCol = chef_columns.find(c => c.name === targetColumn);
-    if (existingCol) {
-      existingCol.cssSelector = selector;
-    } else {
-      chef_columns.push({ name: targetColumn, cssSelector: selector });
+  // ─── Hover Handlers ────────────────────────────────────────
+  function onHoverIn(e) {
+    if (e.target && e.target.nodeType === Node.ELEMENT_NODE) {
+      e.target.classList.add('chef-hover');
     }
-    await chrome.storage.local.set({ chef_columns });
-
-    // Immediately extract to update counts — only overwrite the target column
-    await extractAllColumns('overwrite', targetColumn);
-    showToast(`Mapped: ${targetColumn}`);
   }
 
-  // Keep click/mouseup blockers alive for 500ms so the browser cannot
-  // follow a link from the tail-end of this pointer interaction.
-  setTimeout(() => {
-    document.removeEventListener('click', suppressClick, { capture: true });
-    document.removeEventListener('mouseup', suppressMouseUp, { capture: true });
-  }, 500);
-}
+  function onHoverOut(e) {
+    if (e.target && e.target.nodeType === Node.ELEMENT_NODE) {
+      e.target.classList.remove('chef-hover');
+    }
+  }
 
-// Stricter Selector Math to prevent grabbing entire page blocks
-function computeSelector(el) {
-  if (!el) return '';
-  let path = [];
-  let current = el;
+  // ═══════════════════════════════════════════════════════════
+  //  1. THE EVENT SHIELD SELECTION ENGINE
+  // ═══════════════════════════════════════════════════════════
 
-  while (current && current.nodeType === Node.ELEMENT_NODE && current.tagName.toLowerCase() !== 'body') {
-    let tag = current.tagName.toLowerCase();
+  function startSelectionMode(columnOrAction) {
+    selectionTarget = columnOrAction;
 
-    if (current.id) {
-      path.unshift(`${tag}#${current.id}`);
-      break; // IDs are unique, we can stop here
-    } else if (current.className && typeof current.className === 'string') {
-      let classes = current.className.split(/\s+/).filter(c => c && !c.includes('hover') && !c.includes('active') && !c.includes('style'));
-      if (classes.length > 0) {
-        path.unshift(`${tag}.${classes.join('.')}`);
+    injectHoverStyle();
+
+    // Hover feedback — capture phase so we see it before the page
+    document.addEventListener('mouseover', onHoverIn,  { capture: true });
+    document.addEventListener('mouseout',  onHoverOut, { capture: true });
+
+    // The selection trigger: mousedown on capture phase
+    document.addEventListener('mousedown', onSelectionMouseDown, { capture: true });
+  }
+
+  async function onSelectionMouseDown(e) {
+    // ── Step 1 & 2: Capture target, kill the event completely ──
+    const target = e.target;
+    e.preventDefault();
+    e.stopPropagation();
+    e.stopImmediatePropagation();
+
+    // ── Step 5: Remove selection listeners immediately ──
+    document.removeEventListener('mouseover', onHoverIn,  { capture: true });
+    document.removeEventListener('mouseout',  onHoverOut, { capture: true });
+    document.removeEventListener('mousedown', onSelectionMouseDown, { capture: true });
+
+    // Remove hover highlight
+    if (target) target.classList.remove('chef-hover');
+    removeHoverStyle();
+
+    // ── Step 3: Compute a highly specific CSS selector ──
+    const selector = computeSelector(target);
+
+    // ── Step 4: Persist to chrome.storage.local ──
+    if (selectionTarget === 'next_btn') {
+      await chrome.storage.local.set({ chef_next_btn: selector });
+      showToast('Next-page button saved');
+    } else {
+      const { chef_columns = [] } = await chrome.storage.local.get('chef_columns');
+      const col = chef_columns.find(c => c.name === selectionTarget);
+      if (col) {
+        col.selector = selector;
       } else {
-        path.unshift(tag);
+        chef_columns.push({ name: selectionTarget, selector });
       }
-    } else {
-      path.unshift(tag);
+      await chrome.storage.local.set({ chef_columns });
+
+      // Run an immediate extraction so the popup can show counts
+      await extractAndStore('overwrite');
+      showToast(`Mapped: ${selectionTarget}`);
     }
 
-    current = current.parentElement;
-    if (path.length >= 3) break; // Limit depth so it finds similar siblings
+    selectionTarget = null;
+
+    // ── Step 6: The Shield ──
+    // Attach capture-phase blockers for mouseup and click so the page
+    // never sees the tail end of this pointer interaction.
+    installShield();
   }
-  return path.join(' > ');
-}
 
-// ---------------------------------------------
-// Container-Based Extraction Engine
-// ---------------------------------------------
+  function installShield() {
+    // Clear any prior shield
+    clearShield();
 
-// Find the closest common ancestor DOM element that wraps all mapped selectors.
-// Returns a CSS selector string for that container, or null if none found.
-function computeCommonContainer(activeCols) {
-  // Get first matched element for each column
-  const firstElements = activeCols.map(col => document.querySelector(col.cssSelector));
-  if (firstElements.some(el => !el)) return null;
+    shieldClick = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+    };
+    shieldMouseUp = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+    };
 
-  // Build ancestor chains (parent -> grandparent -> ... -> body)
-  const chains = firstElements.map(el => {
-    const chain = [];
-    let cur = el.parentElement;
-    while (cur && cur !== document.body && cur !== document.documentElement) {
-      chain.push(cur);
+    document.addEventListener('click',   shieldClick,   { capture: true });
+    document.addEventListener('mouseup', shieldMouseUp, { capture: true });
+
+    shieldTimer = setTimeout(clearShield, SHIELD_DURATION);
+  }
+
+  function clearShield() {
+    if (shieldClick)   document.removeEventListener('click',   shieldClick,   { capture: true });
+    if (shieldMouseUp) document.removeEventListener('mouseup', shieldMouseUp, { capture: true });
+    if (shieldTimer)   clearTimeout(shieldTimer);
+    shieldClick = null;
+    shieldMouseUp = null;
+    shieldTimer = null;
+  }
+
+  // ─── CSS Selector Computation ──────────────────────────────
+  // Priority: id → tag + stable classes → nth-child tree
+  function computeSelector(el) {
+    if (!el || el.nodeType !== Node.ELEMENT_NODE) return '';
+
+    // Strategy 1: Element has an id — return it directly
+    if (el.id && !TRANSIENT_CLASS_RE.test(el.id)) {
+      const sel = `#${CSS.escape(el.id)}`;
+      if (isUnique(sel)) return sel;
+    }
+
+    // Strategy 2: Build tag.class selector, walk up until unique (max 5 levels)
+    const parts = [];
+    let cur = el;
+    for (let depth = 0; depth < 5 && cur && cur !== document.body && cur !== document.documentElement; depth++) {
+      const segment = buildSegment(cur);
+      parts.unshift(segment);
+
+      const candidate = parts.join(' > ');
+      // If an ancestor has an id, anchor there
+      if (cur.id && !TRANSIENT_CLASS_RE.test(cur.id)) {
+        const anchored = `#${CSS.escape(cur.id)} > ${parts.slice(1).join(' > ')}`;
+        if (document.querySelector(anchored)) return anchored;
+      }
+      // Check uniqueness — but we want the selector to also match siblings,
+      // so for the FIRST segment only, skip uniqueness (we need querySelectorAll
+      // to return all similar elements)
+      if (depth >= 1 && isUnique(candidate)) return candidate;
+
       cur = cur.parentElement;
     }
-    return chain;
-  });
 
-  // Walk up from the first element's parent; find the shallowest ancestor
-  // that is shared by ALL column elements (lowest common ancestor)
-  for (const ancestor of chains[0]) {
-    if (chains.every(chain => chain.includes(ancestor))) {
-      const selector = buildContainerSelector(ancestor);
-      // Sanity: the selector must match more than one container on the page
-      const matches = document.querySelectorAll(selector);
-      if (matches.length >= 2) return selector;
-      // If only 1 match, try the next ancestor up
+    // Strategy 3: nth-child absolute path (most specific, always unique)
+    return buildNthChildPath(el);
+  }
+
+  function buildSegment(el) {
+    const tag = el.tagName.toLowerCase();
+    const stableClasses = getStableClasses(el);
+    if (stableClasses.length > 0) {
+      return `${tag}.${stableClasses.map(CSS.escape).join('.')}`;
     }
+    return tag;
   }
-  return null;
-}
 
-// Build a reusable CSS selector for a container element (tag + classes).
-function buildContainerSelector(el) {
-  const tag = el.tagName.toLowerCase();
-  if (el.className && typeof el.className === 'string') {
-    const classes = el.className.split(/\s+/).filter(c =>
-      c && !c.includes('hover') && !c.includes('active') && !c.includes('chef'));
-    if (classes.length > 0) return `${tag}.${classes.join('.')}`;
+  function getStableClasses(el) {
+    if (!el.className || typeof el.className !== 'string') return [];
+    return el.className
+      .split(/\s+/)
+      .filter(c => c && !TRANSIENT_CLASS_RE.test(c));
   }
-  // Fallback: use parent context for specificity
-  if (el.parentElement && el.parentElement !== document.body) {
-    const parentTag = el.parentElement.tagName.toLowerCase();
-    if (el.parentElement.className && typeof el.parentElement.className === 'string') {
-      const pClasses = el.parentElement.className.split(/\s+/).filter(c => c);
-      if (pClasses.length > 0) return `${parentTag}.${pClasses.join('.')} > ${tag}`;
+
+  function isUnique(selector) {
+    try {
+      return document.querySelectorAll(selector).length === 1;
+    } catch { return false; }
+  }
+
+  function buildNthChildPath(el) {
+    const parts = [];
+    let cur = el;
+    while (cur && cur !== document.body && cur !== document.documentElement) {
+      const tag = cur.tagName.toLowerCase();
+      const parent = cur.parentElement;
+      if (!parent) { parts.unshift(tag); break; }
+
+      const siblings = Array.from(parent.children);
+      const idx = siblings.indexOf(cur) + 1;
+      parts.unshift(`${tag}:nth-child(${idx})`);
+      cur = parent;
     }
-    return `${parentTag} > ${tag}`;
-  }
-  return tag;
-}
-
-// Search for a column's element within a specific container.
-// Tries progressively shorter selector suffixes, then a fuzzy class fallback.
-function queryWithinContainer(container, fullSelector) {
-  // Try the full selector (works if the selector is entirely within the container)
-  let el = container.querySelector(fullSelector);
-  if (el) return el;
-
-  // Try removing leading segments one at a time (handles cases where
-  // the selector includes the container element itself as a prefix)
-  const parts = fullSelector.split(/\s*>\s*/);
-  for (let i = 1; i < parts.length; i++) {
-    el = container.querySelector(parts.slice(i).join(' > '));
-    if (el) return el;
+    return parts.join(' > ');
   }
 
-  // Also try with descendant combinator splits
-  const spaceParts = fullSelector.split(/\s+/);
-  for (let i = 1; i < spaceParts.length; i++) {
-    el = container.querySelector(spaceParts.slice(i).join(' '));
-    if (el) return el;
+  // ═══════════════════════════════════════════════════════════
+  //  2. CONTAINER-BASED EXTRACTION MATH
+  // ═══════════════════════════════════════════════════════════
+
+  // --- Lowest Common Ancestor ---
+  // Given N elements, find their closest shared parent in the DOM.
+  function findLCA(elements) {
+    if (elements.length === 0) return null;
+    if (elements.length === 1) return elements[0].parentElement;
+
+    // Build ancestor chain for the first element
+    function ancestors(el) {
+      const chain = [];
+      let cur = el;
+      while (cur) { chain.push(cur); cur = cur.parentElement; }
+      return chain;
+    }
+
+    let common = ancestors(elements[0]);
+    for (let i = 1; i < elements.length; i++) {
+      const set = new Set(ancestors(elements[i]));
+      common = common.filter(node => set.has(node));
+    }
+    // `common` is now ordered from deepest to shallowest shared ancestor.
+    // The first entry is the LCA.
+    return common.length > 0 ? common[0] : document.body;
   }
 
-  // Fuzzy fallback: match by the last class in the selector
-  const classParts = fullSelector.split('.');
-  if (classParts.length > 1) {
-    const fuzzyClass = classParts[classParts.length - 1].split(/[\s>[\]]/)[0];
-    if (fuzzyClass) el = container.querySelector(`[class*="${fuzzyClass}"]`);
-    if (el) return el;
-  }
+  // Find the repeating container element (the "row wrapper").
+  // Walk up from the LCA looking for an element that, when queried by
+  // tag+classes, returns multiple siblings — these are our containers.
+  function findContainerSelector(activeCols) {
+    // Get one representative element per column
+    const representatives = [];
+    for (const col of activeCols) {
+      const el = safeQuerySelector(col.selector);
+      if (!el) return null;
+      representatives.push(el);
+    }
 
-  return null;
-}
+    const lca = findLCA(representatives);
+    if (!lca || lca === document.body || lca === document.documentElement) return null;
 
-// FIX #2 & #3: extractAllColumns now accepts targetColName so it only
-// resets the specified column (not all), and no longer filters out empty strings.
-async function extractAllColumns(mode = 'overwrite', targetColName = null) {
-  // Smart Wait: Give lazy-loaded text time to render
-  await new Promise(resolve => setTimeout(resolve, 500));
-
-  const { chef_columns = [], chef_data = [] } = await chrome.storage.local.get(['chef_columns', 'chef_data']);
-  if (chef_columns.length === 0) return;
-
-  const activeCols = chef_columns.filter(c => c.cssSelector);
-  if (activeCols.length === 0) return;
-
-  let newRows = [];
-
-  // --- Container-Based Extraction ---
-  const containerSelector = activeCols.length >= 2
-    ? computeCommonContainer(activeCols)
-    : null;
-
-  if (containerSelector) {
-    const containers = document.querySelectorAll(containerSelector);
-    for (const container of containers) {
-      const row = {};
-      for (const col of chef_columns) {
-        if (!col.cssSelector) { row[col.name] = 'N/A'; continue; }
-        const el = queryWithinContainer(container, col.cssSelector);
-        const text = el ? el.innerText.trim() : '';
-        row[col.name] = text || 'N/A';
+    // The LCA itself is the shared parent of *one* set of column elements.
+    // The repeating container is the LCA or its children pattern.
+    // Walk up from LCA: find the first ancestor whose parent has multiple
+    // children matching the same tag+class signature.
+    let candidate = lca;
+    for (let depth = 0; depth < 8; depth++) {
+      const sel = buildReusableSelector(candidate);
+      if (sel) {
+        const matches = document.querySelectorAll(sel);
+        if (matches.length >= 2) {
+          // Verify: each container should contain at least one column element
+          const valid = Array.from(matches).filter(container =>
+            activeCols.some(col => queryInsideContainer(container, col.selector))
+          );
+          if (valid.length >= 2) return sel;
+        }
       }
-      newRows.push(row);
+      if (!candidate.parentElement || candidate.parentElement === document.body) break;
+      candidate = candidate.parentElement;
     }
-  } else {
-    // Fallback: single column or no common container found.
-    // Query each column independently but still output Array of Objects.
+    return null;
+  }
+
+  // Build a reusable selector for a container element (tag + stable classes).
+  function buildReusableSelector(el) {
+    if (!el || el === document.body) return null;
+    const tag = el.tagName.toLowerCase();
+    const classes = getStableClasses(el);
+    if (classes.length > 0) {
+      return `${tag}.${classes.map(CSS.escape).join('.')}`;
+    }
+    // If no classes, try parent > tag
+    const parent = el.parentElement;
+    if (parent && parent !== document.body) {
+      const pClasses = getStableClasses(parent);
+      const pTag = parent.tagName.toLowerCase();
+      if (pClasses.length > 0) {
+        return `${pTag}.${pClasses.map(CSS.escape).join('.')} > ${tag}`;
+      }
+    }
+    return null;
+  }
+
+  // Query for a column's element inside a specific container.
+  // Tries the full selector, progressively shorter suffixes, and fuzzy class match.
+  function queryInsideContainer(container, fullSelector) {
+    if (!fullSelector) return null;
+
+    // Direct attempt
+    try {
+      let el = container.querySelector(fullSelector);
+      if (el) return el;
+    } catch { /* invalid selector for this context */ }
+
+    // Strip leading segments (the selector may include the container itself)
+    const childCombinatorParts = fullSelector.split(/\s*>\s*/);
+    for (let i = 1; i < childCombinatorParts.length; i++) {
+      try {
+        const sub = childCombinatorParts.slice(i).join(' > ');
+        const el = container.querySelector(sub);
+        if (el) return el;
+      } catch { /* continue */ }
+    }
+
+    // Descendant combinator splits
+    const spaceParts = fullSelector.split(/\s+/);
+    for (let i = 1; i < spaceParts.length; i++) {
+      try {
+        const sub = spaceParts.slice(i).join(' ');
+        const el = container.querySelector(sub);
+        if (el) return el;
+      } catch { /* continue */ }
+    }
+
+    // Last-resort: match by the terminal class
+    const classMatch = fullSelector.match(/\.([a-zA-Z0-9_-]+)(?:\s|>|$)/g);
+    if (classMatch) {
+      const lastClass = classMatch[classMatch.length - 1].replace(/[.>\s]/g, '');
+      if (lastClass) {
+        try {
+          const el = container.querySelector(`.${CSS.escape(lastClass)}`);
+          if (el) return el;
+        } catch { /* give up */ }
+      }
+    }
+
+    return null;
+  }
+
+  function safeQuerySelector(sel) {
+    try { return document.querySelector(sel); } catch { return null; }
+  }
+
+  function safeQuerySelectorAll(sel) {
+    try { return Array.from(document.querySelectorAll(sel)); } catch { return []; }
+  }
+
+  // ─── Core Extraction ───────────────────────────────────────
+  // Returns an Array of Objects: [{ colName: value, ... }, ...]
+  function extractRows(columns) {
+    const activeCols = columns.filter(c => c.selector);
+    if (activeCols.length === 0) return [];
+
+    // --- Container-Based path (2+ columns) ---
+    if (activeCols.length >= 2) {
+      const containerSel = findContainerSelector(activeCols);
+      if (containerSel) {
+        const containers = safeQuerySelectorAll(containerSel);
+        const rows = [];
+        for (const container of containers) {
+          const row = {};
+          for (const col of columns) {
+            if (!col.selector) { row[col.name] = 'N/A'; continue; }
+            const el = queryInsideContainer(container, col.selector);
+            const text = el ? el.innerText.trim() : '';
+            row[col.name] = text || 'N/A';
+          }
+          rows.push(row);
+        }
+        if (rows.length > 0) return rows;
+        // Fall through to independent extraction if container approach yields nothing
+      }
+    }
+
+    // --- Independent Extraction fallback (single column or no LCA found) ---
     const columnArrays = {};
     let maxLen = 0;
     for (const col of activeCols) {
-      let els = Array.from(document.querySelectorAll(col.cssSelector));
-      // Fuzzy Fallback
+      let els = safeQuerySelectorAll(col.selector);
+
+      // Fuzzy class fallback
       if (els.length === 0) {
-        const parts = col.cssSelector.split('.');
-        if (parts.length > 1) {
-          const fuzzyClass = parts[parts.length - 1];
-          els = Array.from(document.querySelectorAll(`[class*="${fuzzyClass}"]`));
+        const classes = col.selector.match(/\.([a-zA-Z0-9_-]+)/g);
+        if (classes && classes.length > 0) {
+          const lastClass = classes[classes.length - 1].replace('.', '');
+          els = safeQuerySelectorAll(`[class*="${lastClass}"]`);
         }
       }
-      // FIX #3: Do NOT filter out empty strings — keep them so arrays
-      // stay aligned across columns when zipped together for export.
+
       columnArrays[col.name] = els.map(el => {
         const text = el.innerText.trim();
         return text || 'N/A';
       });
       maxLen = Math.max(maxLen, columnArrays[col.name].length);
     }
+
+    const rows = [];
     for (let i = 0; i < maxLen; i++) {
       const row = {};
-      for (const col of chef_columns) {
+      for (const col of columns) {
         row[col.name] = (columnArrays[col.name] && columnArrays[col.name][i]) || 'N/A';
       }
-      newRows.push(row);
+      rows.push(row);
     }
+    return rows;
   }
 
-  // --- Storage: overwrite or append with deduplication ---
-  let finalData;
-  if (mode === 'overwrite') {
-    if (targetColName && Array.isArray(chef_data) && chef_data.length > 0) {
-      // FIX #2: Only overwrite the targeted column's values.
-      // Preserve all other columns' data in the existing rows.
-      finalData = [];
-      const maxLen = Math.max(chef_data.length, newRows.length);
-      for (let i = 0; i < maxLen; i++) {
-        const existingRow = chef_data[i] || {};
-        const newRow = newRows[i] || {};
-        // Start from existing data, then overwrite only the target column
-        const merged = { ...existingRow };
-        merged[targetColName] = newRow[targetColName] || 'N/A';
-        // If the new row has columns not yet in existing data (first-time
-        // columns), add those too
-        for (const key of Object.keys(newRow)) {
-          if (!(key in merged)) {
-            merged[key] = newRow[key];
-          }
-        }
-        finalData.push(merged);
-      }
+  // ─── Extract & Store Pipeline ──────────────────────────────
+  // mode: 'overwrite' replaces chef_data entirely
+  //        'append'    merges new rows with deduplication
+  async function extractAndStore(mode = 'overwrite') {
+    // Wait for lazy-loaded content to render
+    await sleep(LAZY_RENDER_MS);
+
+    const { chef_columns = [], chef_data = [] } = await chrome.storage.local.get(['chef_columns', 'chef_data']);
+    if (chef_columns.length === 0) return;
+
+    const newRows = extractRows(chef_columns);
+    if (newRows.length === 0) return;
+
+    let finalData;
+    if (mode === 'append') {
+      const existing = Array.isArray(chef_data) ? chef_data : [];
+      const existingKeys = new Set(existing.map(r => JSON.stringify(r)));
+      const unique = newRows.filter(r => !existingKeys.has(JSON.stringify(r)));
+      finalData = [...existing, ...unique];
     } else {
       finalData = newRows;
     }
-  } else {
-    const existing = Array.isArray(chef_data) ? chef_data : [];
-    const existingKeys = new Set(existing.map(r => JSON.stringify(r)));
-    const uniqueNew = newRows.filter(r => !existingKeys.has(JSON.stringify(r)));
-    finalData = [...existing, ...uniqueNew];
+
+    await chrome.storage.local.set({ chef_data: finalData });
   }
 
-  await chrome.storage.local.set({ chef_data: finalData });
-}
+  // ═══════════════════════════════════════════════════════════
+  //  3. AUTO-SCROLL & PAGINATION
+  // ═══════════════════════════════════════════════════════════
 
-// ---------------------------------------------
-// Automation Math
-// ---------------------------------------------
-async function performAutoScroll(scrolls) {
-  for (let i = 0; i < scrolls; i++) {
-    window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'smooth' });
-    setTimeout(() => window.scrollTo(0, document.documentElement.scrollHeight), 50);
+  async function performAutoScroll(targetItems) {
+    let prevCount = 0;
+    let stallCount = 0;
+    const MAX_STALLS = 5;
 
-    await new Promise(r => setTimeout(r, 800)); // Wait for network
-    await extractAllColumns('append'); // Extract on every tick
-    showToast(`Scrolling... ${i + 1}/${scrolls}`);
-  }
-  showToast('Auto-Scroll Complete!');
-}
+    for (let tick = 0; tick < targetItems * 3; tick++) {
+      // Scroll to bottom
+      window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'smooth' });
+      await sleep(SCROLL_SETTLE_MS);
 
-async function startPagination() {
-  const { is_paginating, pages_left, chef_next_btn } = await chrome.storage.local.get(['is_paginating', 'pages_left', 'chef_next_btn']);
+      // Extract and append
+      await extractAndStore('append');
 
-  if (is_paginating && pages_left > 0) {
-    await extractAllColumns('append');
-    await chrome.storage.local.set({ pages_left: pages_left - 1 });
+      // Check progress
+      const { chef_data = [] } = await chrome.storage.local.get('chef_data');
+      const currentCount = chef_data.length;
+      showToast(`Extracting... ${currentCount} / ${targetItems} items`);
 
-    if (pages_left - 1 > 0 && chef_next_btn) {
-      const nextBtn = document.querySelector(chef_next_btn);
-      if (nextBtn) {
-        showToast('Loading next page...');
-        nextBtn.click();
+      if (currentCount >= targetItems) {
+        showToast(`Extraction complete: ${currentCount} items`);
+        return;
+      }
+
+      // Stall detection: if count didn't increase, we may have hit the end
+      if (currentCount === prevCount) {
+        stallCount++;
+        if (stallCount >= MAX_STALLS) {
+          showToast(`Stopped: no new items after ${MAX_STALLS} scrolls (${currentCount} total)`);
+          return;
+        }
       } else {
-        showToast('Next button not found. Stopping.');
+        stallCount = 0;
+      }
+      prevCount = currentCount;
+    }
+    showToast('Auto-scroll finished');
+  }
+
+  async function startPagination() {
+    const { is_paginating, pages_left, chef_next_btn } =
+      await chrome.storage.local.get(['is_paginating', 'pages_left', 'chef_next_btn']);
+
+    if (!is_paginating || !pages_left || pages_left <= 0) return;
+
+    // Extract current page
+    await extractAndStore('append');
+    const remaining = pages_left - 1;
+    await chrome.storage.local.set({ pages_left: remaining });
+
+    if (remaining > 0 && chef_next_btn) {
+      const nextBtn = safeQuerySelector(chef_next_btn);
+      if (nextBtn) {
+        showToast(`Paginating... ${remaining} pages left`);
+        nextBtn.click();
+        // The next page load will re-trigger startPagination via the load listener
+      } else {
+        showToast('Next-page button not found. Stopping.');
         await chrome.storage.local.set({ is_paginating: false });
       }
     } else {
-      showToast('Pagination Complete!');
+      showToast('Pagination complete');
       await chrome.storage.local.set({ is_paginating: false });
     }
   }
-}
 
-// Check pagination on page load
-window.addEventListener('load', async () => {
-  const { is_paginating } = await chrome.storage.local.get(['is_paginating']);
-  if (is_paginating) {
-    setTimeout(startPagination, 2000); // Give DOM 2 seconds to settle
-  }
-});
+  // Resume pagination on page load (for multi-page navigation)
+  window.addEventListener('load', async () => {
+    const { is_paginating } = await chrome.storage.local.get('is_paginating');
+    if (is_paginating) {
+      await sleep(PAGE_SETTLE_MS);
+      startPagination();
+    }
+  });
 
-// Toast UI
-function showToast(message) {
-  let toast = document.getElementById('chef-toast');
-  if (!toast) {
-    toast = document.createElement('div');
-    toast.id = 'chef-toast';
-    toast.style.cssText = 'position:fixed; top:20px; left:50%; transform:translateX(-50%); background:#f7d74a; color:#09090b; padding:8px 16px; border-radius:4px; font-weight:bold; z-index:999999; font-family:sans-serif; box-shadow:0 4px 6px rgba(0,0,0,0.3); transition: opacity 0.3s;';
-    document.body.appendChild(toast);
+  // ═══════════════════════════════════════════════════════════
+  //  MESSAGE ROUTER
+  // ═══════════════════════════════════════════════════════════
+
+  chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+    if (!msg || !msg.action) return;
+
+    switch (msg.action) {
+      case 'select_element':
+        startSelectionMode(msg.column);
+        sendResponse({ ok: true });
+        break;
+
+      case 'select_next_btn':
+        startSelectionMode('next_btn');
+        sendResponse({ ok: true });
+        break;
+
+      case 'auto_scroll':
+        performAutoScroll(msg.target);
+        sendResponse({ ok: true });
+        break;
+
+      case 'scrape_and_paginate':
+        startPagination();
+        sendResponse({ ok: true });
+        break;
+
+      default:
+        sendResponse({ ok: false, error: 'Unknown action' });
+    }
+    return true; // keep message channel open for async
+  });
+
+  // ═══════════════════════════════════════════════════════════
+  //  UTILITIES
+  // ═══════════════════════════════════════════════════════════
+
+  function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
   }
-  toast.textContent = message;
-  toast.style.opacity = '1';
-  clearTimeout(toast.timeout);
-  toast.timeout = setTimeout(() => { toast.style.opacity = '0'; }, 2000);
-}
+
+  function showToast(message) {
+    let toast = document.getElementById(TOAST_ID);
+    if (!toast) {
+      toast = document.createElement('div');
+      toast.id = TOAST_ID;
+      toast.style.cssText =
+        'position:fixed;top:20px;left:50%;transform:translateX(-50%);' +
+        'background:#f7d74a;color:#1a1a1a;padding:10px 20px;border-radius:8px;' +
+        'font-weight:800;z-index:2147483647;font-family:sans-serif;font-size:13px;' +
+        'box-shadow:0 4px 12px rgba(0,0,0,0.4);transition:opacity 0.3s;pointer-events:none;';
+      document.body.appendChild(toast);
+    }
+    toast.textContent = message;
+    toast.style.opacity = '1';
+    clearTimeout(toast._timer);
+    toast._timer = setTimeout(() => { toast.style.opacity = '0'; }, 2500);
+  }
+})();
