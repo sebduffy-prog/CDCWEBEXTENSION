@@ -59,15 +59,15 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // --- Select Next-Page Button ---
-  btnSelectNext.addEventListener('click', () => {
-    sendToContent({ action: 'select_next_btn' });
+  btnSelectNext.addEventListener('click', async () => {
+    await sendToContent({ action: 'select_next_btn' });
     window.close();
   });
 
   // --- Auto-Scroll Extraction ---
-  btnAutoScroll.addEventListener('click', () => {
+  btnAutoScroll.addEventListener('click', async () => {
     const target = parseInt(targetCountInput.value, 10) || 20;
-    sendToContent({ action: 'auto_scroll', target });
+    await sendToContent({ action: 'auto_scroll', target });
     window.close();
   });
 
@@ -75,7 +75,7 @@ document.addEventListener('DOMContentLoaded', () => {
   btnAutoPaginate.addEventListener('click', async () => {
     const pages = parseInt(pageCountInput.value, 10) || 3;
     await chrome.storage.local.set({ is_paginating: true, pages_left: pages });
-    sendToContent({ action: 'scrape_and_paginate' });
+    await sendToContent({ action: 'scrape_and_paginate' });
     window.close();
   });
 
@@ -231,8 +231,8 @@ document.addEventListener('DOMContentLoaded', () => {
       const selectBtn = document.createElement('button');
       selectBtn.className = 'btn-sm btn-select-col';
       selectBtn.textContent = 'Select';
-      selectBtn.addEventListener('click', () => {
-        sendToContent({ action: 'select_element', column: col.name });
+      selectBtn.addEventListener('click', async () => {
+        await sendToContent({ action: 'select_element', column: col.name });
         window.close();
       });
 
@@ -411,14 +411,13 @@ ${dataRows}
   //  HELPERS
   // ═══════════════════════════════════════════════════════════
 
-  function sendToContent(message) {
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      if (tabs[0]) {
-        chrome.tabs.sendMessage(tabs[0].id, message).catch(() => {
-          alert('Content script not ready. Please refresh the page and try again.');
-        });
-      }
-    });
+  async function sendToContent(message) {
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (tabs[0]) {
+      await chrome.tabs.sendMessage(tabs[0].id, message).catch(() => {
+        alert('Content script not ready. Please refresh the page and try again.');
+      });
+    }
   }
 
   function downloadBlob(content, type, filename) {
