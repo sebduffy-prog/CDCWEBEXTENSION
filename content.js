@@ -58,7 +58,8 @@ function startSelectionMode(columnName) {
   
   document.addEventListener('mouseover', onMouseOver, { capture: true });
   document.addEventListener('mouseout', onMouseOut, { capture: true });
-  eventsToBlock.forEach(ev => document.addEventListener(ev, onClick, { capture: true }));
+  eventsToBlock.forEach(ev => document.addEventListener(ev, blockEvent, { capture: true }));
+  document.addEventListener('click', onClick, { capture: true });
 }
 
 function onMouseOver(e) {
@@ -74,9 +75,10 @@ function onMouseOut(e) {
 }
 
 async function onClick(e) {
-  blockEvent(e);
-  if (e.type !== 'click') return; // Only process the actual click
-  
+  e.preventDefault();
+  e.stopPropagation();
+  e.stopImmediatePropagation();
+
   isSelecting = false;
   document.removeEventListener('mouseover', onMouseOver, { capture: true });
   document.removeEventListener('mouseout', onMouseOut, { capture: true });
@@ -106,7 +108,7 @@ async function onClick(e) {
   // Remove event blockers after a short delay
   setTimeout(() => {
     eventsToBlock.forEach(ev => document.removeEventListener(ev, blockEvent, { capture: true }));
-    eventsToBlock.forEach(ev => document.removeEventListener(ev, onClick, { capture: true }));
+    document.removeEventListener('click', onClick, { capture: true });
   }, 300);
 }
 
