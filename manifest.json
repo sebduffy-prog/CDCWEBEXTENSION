@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Chef de Commis",
-  "version": "5.1.0",
+  "version": "6.1.0",
   "description": "Ultimate visual scraping with AI-ingestion data formatting pipeline.",
   "permissions": [
     "activeTab",

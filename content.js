@@ -1,5 +1,5 @@
 /* ================================================================
-   Chef de Commis v6.0 — Content Script
+   Chef de Commis v6.1 — Content Script
    ================================================================
    Architecture:
    1. Event Shield Selection Engine   — mousedown capture-phase interception
@@ -23,6 +23,7 @@
 
   // ─── Selection State ───────────────────────────────────────
   let selectionTarget = null;     // column name or 'next_btn'
+  let selectionActive = false;    // re-entry guard
 
   // References to shield listeners so we can remove them precisely
   let shieldClick   = null;
@@ -69,7 +70,13 @@
   // ═══════════════════════════════════════════════════════════
 
   function startSelectionMode(columnOrAction) {
+    // [FIX #4] Re-entry guard: tear down any prior selection mode first
+    if (selectionActive) {
+      cancelSelectionMode();
+    }
+
     selectionTarget = columnOrAction;
+    selectionActive = true;
 
     injectHoverStyle();
 
@@ -79,6 +86,33 @@
 
     // The selection trigger: mousedown on capture phase
     document.addEventListener('mousedown', onSelectionMouseDown, { capture: true });
+
+    // [FIX #5] Escape key to cancel selection mode
+    document.addEventListener('keydown', onSelectionKeyDown, { capture: true });
+
+    showToast(`Click to select: ${columnOrAction === 'next_btn' ? 'Next-Page Button' : columnOrAction} (Esc to cancel)`);
+  }
+
+  // [FIX #5] Escape key handler
+  function onSelectionKeyDown(e) {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      cancelSelectionMode();
+      showToast('Selection cancelled');
+    }
+  }
+
+  // Clean teardown of selection mode without committing a selection
+  function cancelSelectionMode() {
+    document.removeEventListener('mouseover', onHoverIn,  { capture: true });
+    document.removeEventListener('mouseout',  onHoverOut, { capture: true });
+    document.removeEventListener('mousedown', onSelectionMouseDown, { capture: true });
+    document.removeEventListener('keydown', onSelectionKeyDown, { capture: true });
+    removeHoverStyle();
+    selectionTarget = null;
+    selectionActive = false;
   }
 
   async function onSelectionMouseDown(e) {
@@ -92,13 +126,21 @@
     document.removeEventListener('mouseover', onHoverIn,  { capture: true });
     document.removeEventListener('mouseout',  onHoverOut, { capture: true });
     document.removeEventListener('mousedown', onSelectionMouseDown, { capture: true });
+    document.removeEventListener('keydown', onSelectionKeyDown, { capture: true });
+    selectionActive = false;
 
     // Remove hover highlight
     if (target) target.classList.remove('chef-hover');
     removeHoverStyle();
 
-    // ── Step 3: Compute a highly specific CSS selector ──
+    // ── Step 3: Compute a scraping-optimized CSS selector ──
     const selector = computeSelector(target);
+
+    if (!selector) {
+      showToast('Could not compute selector for that element');
+      selectionTarget = null;
+      return;
+    }
 
     // ── Step 4: Persist to chrome.storage.local ──
     if (selectionTarget === 'next_btn') {
@@ -158,17 +200,19 @@
   }
 
   // ─── CSS Selector Computation ──────────────────────────────
-  // Priority: id → tag + stable classes → nth-child tree
+  // [FIX #1] Scraping-optimized: prefers selectors that match MULTIPLE
+  // similar elements (ideal for row extraction) over unique selectors.
+  // Priority: id → multi-match tag.class → anchored parent path → nth-child
   function computeSelector(el) {
     if (!el || el.nodeType !== Node.ELEMENT_NODE) return '';
 
-    // Strategy 1: Element has an id — return it directly
+    // Strategy 1: Element has an id — return it directly (unique by definition)
     if (el.id && !TRANSIENT_CLASS_RE.test(el.id)) {
       const sel = `#${CSS.escape(el.id)}`;
       if (isUnique(sel)) return sel;
     }
 
-    // Strategy 2: Build tag.class selector, walk up until unique (max 5 levels)
+    // Strategy 2: Build tag.class selector, prefer multi-match for scraping
     const parts = [];
     let cur = el;
     for (let depth = 0; depth < 5 && cur && cur !== document.body && cur !== document.documentElement; depth++) {
@@ -176,14 +220,26 @@
       parts.unshift(segment);
 
       const candidate = parts.join(' > ');
+
       // If an ancestor has an id, anchor there
       if (cur.id && !TRANSIENT_CLASS_RE.test(cur.id)) {
         const anchored = `#${CSS.escape(cur.id)} > ${parts.slice(1).join(' > ')}`;
         if (document.querySelector(anchored)) return anchored;
       }
-      // Check uniqueness — but we want the selector to also match siblings,
-      // so for the FIRST segment only, skip uniqueness (we need querySelectorAll
-      // to return all similar elements)
+
+      // [FIX #1] At depth 0: if the simple tag.class selector matches
+      // multiple elements, that's the IDEAL scraping selector — return it.
+      // This is the most common case: user clicks one of many identical
+      // elements (e.g., one product title out of 20).
+      if (depth === 0) {
+        const count = safeCount(candidate);
+        if (count >= 2) return candidate;
+        // count === 1 means element is unique at this level; keep walking
+        // up to find a parent context (might be useful for container detection)
+        if (count === 1) return candidate;
+      }
+
+      // depth >= 1: accept if unique (parent context narrows to one element)
       if (depth >= 1 && isUnique(candidate)) return candidate;
 
       cur = cur.parentElement;
@@ -213,6 +269,12 @@
     try {
       return document.querySelectorAll(selector).length === 1;
     } catch { return false; }
+  }
+
+  function safeCount(selector) {
+    try {
+      return document.querySelectorAll(selector).length;
+    } catch { return 0; }
   }
 
   function buildNthChildPath(el) {
@@ -284,9 +346,9 @@
       if (sel) {
         const matches = document.querySelectorAll(sel);
         if (matches.length >= 2) {
-          // Verify: each container should contain at least one column element
+          // [FIX #7] Verify: each container should contain elements from ALL columns
           const valid = Array.from(matches).filter(container =>
-            activeCols.some(col => queryInsideContainer(container, col.selector))
+            activeCols.every(col => queryInsideContainer(container, col.selector))
           );
           if (valid.length >= 2) return sel;
         }
@@ -348,15 +410,28 @@
       } catch { /* continue */ }
     }
 
-    // Last-resort: match by the terminal class
-    const classMatch = fullSelector.match(/\.([a-zA-Z0-9_-]+)(?:\s|>|$)/g);
-    if (classMatch) {
-      const lastClass = classMatch[classMatch.length - 1].replace(/[.>\s]/g, '');
-      if (lastClass) {
+    // [FIX #2] Last-resort: match by the terminal tag.class segment
+    // Previous regex missed classes followed by '.' (e.g., tag.a.b — '.b' was missed)
+    // Now we split by combinators and use the last segment directly.
+    const segments = fullSelector.split(/\s*[>\s+~]\s*/).filter(Boolean);
+    if (segments.length > 0) {
+      const terminal = segments[segments.length - 1].trim();
+      if (terminal) {
         try {
-          const el = container.querySelector(`.${CSS.escape(lastClass)}`);
+          const el = container.querySelector(terminal);
           if (el) return el;
-        } catch { /* give up */ }
+        } catch { /* continue */ }
+
+        // Extract just the classes from the terminal and try each
+        const termClasses = terminal.match(/\.([a-zA-Z0-9_-]+)/g);
+        if (termClasses) {
+          for (let i = termClasses.length - 1; i >= 0; i--) {
+            try {
+              const el = container.querySelector(termClasses[i]);
+              if (el) return el;
+            } catch { /* continue */ }
+          }
+        }
       }
     }
 
@@ -404,12 +479,30 @@
     for (const col of activeCols) {
       let els = safeQuerySelectorAll(col.selector);
 
-      // Fuzzy class fallback
-      if (els.length === 0) {
+      // [FIX #6] Fuzzy class fallback with CSS.escape for safety
+      // Triggers at <=1 match (not just 0) to recover from nth-child selectors
+      if (els.length <= 1) {
         const classes = col.selector.match(/\.([a-zA-Z0-9_-]+)/g);
         if (classes && classes.length > 0) {
           const lastClass = classes[classes.length - 1].replace('.', '');
-          els = safeQuerySelectorAll(`[class*="${lastClass}"]`);
+          const fuzzyEls = safeQuerySelectorAll(`.${CSS.escape(lastClass)}`);
+          if (fuzzyEls.length > els.length) {
+            els = fuzzyEls;
+          }
+        }
+      }
+
+      // Additional fallback: try tag name + first class combo
+      if (els.length <= 1) {
+        const tagMatch = col.selector.match(/^([a-z][a-z0-9]*)/i);
+        const classMatch = col.selector.match(/\.([a-zA-Z0-9_-]+)/g);
+        if (tagMatch && classMatch && classMatch.length > 0) {
+          const tag = tagMatch[1];
+          const firstClass = classMatch[0]; // includes the dot
+          const combo = safeQuerySelectorAll(`${tag}${firstClass}`);
+          if (combo.length > els.length) {
+            els = combo;
+          }
         }
       }
 
@@ -526,13 +619,65 @@
     }
   }
 
-  // Resume pagination on page load (for multi-page navigation)
+  // [FIX #3] Resume pagination on page load AND SPA navigation
+  // Full page loads trigger 'load'. SPA navigations trigger URL changes
+  // without a load event, so we also observe DOM mutations after URL changes.
   window.addEventListener('load', async () => {
     const { is_paginating } = await chrome.storage.local.get('is_paginating');
     if (is_paginating) {
       await sleep(PAGE_SETTLE_MS);
       startPagination();
     }
+  });
+
+  // SPA support: detect URL changes via popstate + polling fallback
+  let lastUrl = location.href;
+
+  async function onUrlChange() {
+    const { is_paginating } = await chrome.storage.local.get('is_paginating');
+    if (is_paginating) {
+      await sleep(PAGE_SETTLE_MS);
+      startPagination();
+    }
+  }
+
+  window.addEventListener('popstate', () => {
+    if (location.href !== lastUrl) {
+      lastUrl = location.href;
+      onUrlChange();
+    }
+  });
+
+  // MutationObserver to catch SPA navigations that change content without URL change
+  // (e.g., React/Vue/Angular re-renders after next-page click)
+  let paginationObserver = null;
+
+  function setupPaginationObserver() {
+    if (paginationObserver) return;
+    paginationObserver = new MutationObserver(async () => {
+      const { is_paginating } = await chrome.storage.local.get('is_paginating');
+      if (!is_paginating) {
+        // No longer paginating, disconnect
+        paginationObserver.disconnect();
+        paginationObserver = null;
+        return;
+      }
+      // Debounce: wait for DOM to settle before extracting
+      if (paginationObserver._debounce) clearTimeout(paginationObserver._debounce);
+      paginationObserver._debounce = setTimeout(async () => {
+        const currentUrl = location.href;
+        if (currentUrl !== lastUrl) {
+          lastUrl = currentUrl;
+          await onUrlChange();
+        }
+      }, PAGE_SETTLE_MS);
+    });
+    paginationObserver.observe(document.body, { childList: true, subtree: true });
+  }
+
+  // Start observer if pagination is already active (e.g., content script re-injected)
+  chrome.storage.local.get('is_paginating').then(({ is_paginating }) => {
+    if (is_paginating) setupPaginationObserver();
   });
 
   // ═══════════════════════════════════════════════════════════
@@ -559,6 +704,7 @@
         break;
 
       case 'scrape_and_paginate':
+        setupPaginationObserver();
         startPagination();
         sendResponse({ ok: true });
         break;
