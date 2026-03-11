@@ -140,49 +140,162 @@ function computeSelector(el) {
 }
 
 // ---------------------------------------------
-// Data Extraction & Sync Engine
+// Container-Based Extraction Engine
 // ---------------------------------------------
+
+// Find the closest common ancestor DOM element that wraps all mapped selectors.
+// Returns a CSS selector string for that container, or null if none found.
+function computeCommonContainer(activeCols) {
+  // Get first matched element for each column
+  const firstElements = activeCols.map(col => document.querySelector(col.cssSelector));
+  if (firstElements.some(el => !el)) return null;
+
+  // Build ancestor chains (parent -> grandparent -> ... -> body)
+  const chains = firstElements.map(el => {
+    const chain = [];
+    let cur = el.parentElement;
+    while (cur && cur !== document.body && cur !== document.documentElement) {
+      chain.push(cur);
+      cur = cur.parentElement;
+    }
+    return chain;
+  });
+
+  // Walk up from the first element's parent; find the shallowest ancestor
+  // that is shared by ALL column elements (lowest common ancestor)
+  for (const ancestor of chains[0]) {
+    if (chains.every(chain => chain.includes(ancestor))) {
+      const selector = buildContainerSelector(ancestor);
+      // Sanity: the selector must match more than one container on the page
+      const matches = document.querySelectorAll(selector);
+      if (matches.length >= 2) return selector;
+      // If only 1 match, try the next ancestor up
+    }
+  }
+  return null;
+}
+
+// Build a reusable CSS selector for a container element (tag + classes).
+function buildContainerSelector(el) {
+  const tag = el.tagName.toLowerCase();
+  if (el.className && typeof el.className === 'string') {
+    const classes = el.className.split(/\s+/).filter(c =>
+      c && !c.includes('hover') && !c.includes('active') && !c.includes('chef'));
+    if (classes.length > 0) return `${tag}.${classes.join('.')}`;
+  }
+  // Fallback: use parent context for specificity
+  if (el.parentElement && el.parentElement !== document.body) {
+    const parentTag = el.parentElement.tagName.toLowerCase();
+    if (el.parentElement.className && typeof el.parentElement.className === 'string') {
+      const pClasses = el.parentElement.className.split(/\s+/).filter(c => c);
+      if (pClasses.length > 0) return `${parentTag}.${pClasses.join('.')} > ${tag}`;
+    }
+    return `${parentTag} > ${tag}`;
+  }
+  return tag;
+}
+
+// Search for a column's element within a specific container.
+// Tries progressively shorter selector suffixes, then a fuzzy class fallback.
+function queryWithinContainer(container, fullSelector) {
+  // Try the full selector (works if the selector is entirely within the container)
+  let el = container.querySelector(fullSelector);
+  if (el) return el;
+
+  // Try removing leading segments one at a time (handles cases where
+  // the selector includes the container element itself as a prefix)
+  const parts = fullSelector.split(/\s*>\s*/);
+  for (let i = 1; i < parts.length; i++) {
+    el = container.querySelector(parts.slice(i).join(' > '));
+    if (el) return el;
+  }
+
+  // Also try with descendant combinator splits
+  const spaceParts = fullSelector.split(/\s+/);
+  for (let i = 1; i < spaceParts.length; i++) {
+    el = container.querySelector(spaceParts.slice(i).join(' '));
+    if (el) return el;
+  }
+
+  // Fuzzy fallback: match by the last class in the selector
+  const classParts = fullSelector.split('.');
+  if (classParts.length > 1) {
+    const fuzzyClass = classParts[classParts.length - 1].split(/[\s>[\]]/)[0];
+    if (fuzzyClass) el = container.querySelector(`[class*="${fuzzyClass}"]`);
+    if (el) return el;
+  }
+
+  return null;
+}
+
 async function extractAllColumns(mode = 'overwrite') {
   // Smart Wait: Give lazy-loaded text time to render
-  await new Promise(resolve => setTimeout(resolve, 500)); 
-  
-  const { chef_columns = [], chef_data = {} } = await chrome.storage.local.get(['chef_columns', 'chef_data']);
+  await new Promise(resolve => setTimeout(resolve, 500));
+
+  const { chef_columns = [], chef_data = [] } = await chrome.storage.local.get(['chef_columns', 'chef_data']);
   if (chef_columns.length === 0) return;
 
-  if (mode === 'overwrite') {
-    for (const col of chef_columns) chef_data[col.name] = [];
-  }
+  const activeCols = chef_columns.filter(c => c.cssSelector);
+  if (activeCols.length === 0) return;
 
-  for (const col of chef_columns) {
-    if (!col.cssSelector) continue;
-    
-    let els = Array.from(document.querySelectorAll(col.cssSelector));
-    
-    // Fuzzy Fallback: If 0 items found, try searching by the last class name
-    if (els.length === 0) {
+  let newRows = [];
+
+  // --- Container-Based Extraction ---
+  const containerSelector = activeCols.length >= 2
+    ? computeCommonContainer(activeCols)
+    : null;
+
+  if (containerSelector) {
+    const containers = document.querySelectorAll(containerSelector);
+    for (const container of containers) {
+      const row = {};
+      for (const col of chef_columns) {
+        if (!col.cssSelector) { row[col.name] = 'N/A'; continue; }
+        const el = queryWithinContainer(container, col.cssSelector);
+        const text = el ? el.innerText.trim() : '';
+        row[col.name] = text || 'N/A';
+      }
+      newRows.push(row);
+    }
+  } else {
+    // Fallback: single column or no common container found.
+    // Query each column independently but still output Array of Objects.
+    const columnArrays = {};
+    let maxLen = 0;
+    for (const col of activeCols) {
+      let els = Array.from(document.querySelectorAll(col.cssSelector));
+      // Fuzzy Fallback
+      if (els.length === 0) {
         const parts = col.cssSelector.split('.');
         if (parts.length > 1) {
-            const fuzzyClass = parts[parts.length - 1];
-            els = Array.from(document.querySelectorAll(`[class*="${fuzzyClass}"]`));
+          const fuzzyClass = parts[parts.length - 1];
+          els = Array.from(document.querySelectorAll(`[class*="${fuzzyClass}"]`));
         }
+      }
+      columnArrays[col.name] = els.map(el => el.innerText.trim()).filter(t => t.length > 0);
+      maxLen = Math.max(maxLen, columnArrays[col.name].length);
     }
-
-    const newValues = els.map(el => el.innerText.trim()).filter(text => text.length > 0);
-    
-    if (mode === 'append') {
-      const currentSet = new Set(chef_data[col.name] || []);
-      newValues.forEach(val => {
-        if (!currentSet.has(val)) {
-          if (!chef_data[col.name]) chef_data[col.name] = [];
-          chef_data[col.name].push(val);
-        }
-      });
-    } else {
-      chef_data[col.name] = newValues;
+    for (let i = 0; i < maxLen; i++) {
+      const row = {};
+      for (const col of chef_columns) {
+        row[col.name] = (columnArrays[col.name] && columnArrays[col.name][i]) || 'N/A';
+      }
+      newRows.push(row);
     }
   }
-  
-  await chrome.storage.local.set({ chef_data });
+
+  // --- Storage: overwrite or append with deduplication ---
+  let finalData;
+  if (mode === 'overwrite') {
+    finalData = newRows;
+  } else {
+    const existing = Array.isArray(chef_data) ? chef_data : [];
+    const existingKeys = new Set(existing.map(r => JSON.stringify(r)));
+    const uniqueNew = newRows.filter(r => !existingKeys.has(JSON.stringify(r)));
+    finalData = [...existing, ...uniqueNew];
+  }
+
+  await chrome.storage.local.set({ chef_data: finalData });
 }
 
 // ---------------------------------------------

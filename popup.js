@@ -69,22 +69,19 @@ document.addEventListener('DOMContentLoaded', async () => {
   // The Data Formatting Pipeline
   // -----------------------------------------
   btnFormat.addEventListener('click', async () => {
-    const { chef_columns = [], chef_data = {} } = await chrome.storage.local.get(['chef_columns', 'chef_data']);
+    const { chef_columns = [], chef_data = [] } = await chrome.storage.local.get(['chef_columns', 'chef_data']);
     if (chef_columns.length === 0) return outputPreview.value = "No columns mapped.";
 
-    // Determine row count by finding the longest array
-    let maxRows = 0;
-    for (const key in chef_data) {
-      if (chef_data[key].length > maxRows) maxRows = chef_data[key].length;
-    }
+    const rows = Array.isArray(chef_data) ? chef_data : [];
+    if (rows.length === 0) return outputPreview.value = "No data extracted yet.";
 
     let finalText = '';
 
-    for (let i = 0; i < maxRows; i++) {
-      chef_columns.forEach(col => {
-        let rawValue = (chef_data[col.name] && chef_data[col.name][i]) ? chef_data[col.name][i] : 'N/A';
+    for (const row of rows) {
+      for (const col of chef_columns) {
+        const rawValue = row[col.name] || 'N/A';
         finalText += `${col.name}: ${sanitize(rawValue)}\n`;
-      });
+      }
       finalText += '---\n';
     }
 
@@ -120,11 +117,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Helpers
   // -----------------------------------------
   async function renderColumns() {
-    const { chef_columns = [], chef_data = {} } = await chrome.storage.local.get(['chef_columns', 'chef_data']);
+    const { chef_columns = [], chef_data = [] } = await chrome.storage.local.get(['chef_columns', 'chef_data']);
+    const rows = Array.isArray(chef_data) ? chef_data : [];
     columnsContainer.innerHTML = '';
-    
+
     chef_columns.forEach(col => {
-      const count = (chef_data[col.name] || []).length;
+      const count = rows.filter(r => r[col.name] && r[col.name] !== 'N/A').length;
       const row = document.createElement('div');
       row.className = 'column-row';
       row.innerHTML = `
