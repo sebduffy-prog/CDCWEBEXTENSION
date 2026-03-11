@@ -4,7 +4,7 @@ let targetColumn = '';
 let isPaginating = false;
 
 // The Event Fortress (Blocks YouTube/Instagram from hijacking clicks)
-const eventsToBlock = ['click', 'mousedown', 'mouseup', 'pointerdown', 'pointerup'];
+const eventsToBlock = ['mousedown', 'mouseup', 'pointerdown', 'pointerup'];
 
 function blockEvent(e) {
   if (isSelecting) {
